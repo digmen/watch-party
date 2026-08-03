@@ -1,0 +1,22 @@
+{
+  "name": "watch-party",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.dev.yml up --build",
+    "prod": "docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up --build -d",
+    "build": "bun --filter '*' build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "test": "bun --filter '*' test",
+    "typecheck": "bun --filter '*' typecheck",
+    "db:migrate": "bun --filter '@watch-party/backend' db:migrate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "typescript": "^5.7.0"
+  }
+}

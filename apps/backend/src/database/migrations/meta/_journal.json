@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1785736406586,
+      "tag": "0000_futuristic_jack_murdock",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785738063544,
+      "tag": "0001_outstanding_thena",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785740021921,
+      "tag": "0002_quiet_switch",
+      "breakpoints": true
+    }
+  ]
+}

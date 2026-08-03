@@ -1,0 +1,11 @@
+# Dev overlay: exposes Postgres/Redis to the host for local debugging (psql, redis-cli, a
+# GUI client). Traefik/cloudflared are intentionally NOT part of dev — during local work the
+# backend/frontend run directly via `bun --watch` / `vite` against these two containers.
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"

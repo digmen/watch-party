@@ -1,0 +1,18 @@
+api:
+  dashboard: false
+
+ping: {}
+
+entryPoints:
+  web:
+    address: ":80"
+
+providers:
+  docker:
+    exposedByDefault: false
+    # No explicit `network:` — Compose prefixes the network name with its project name (derived
+    # from the compose file's directory, e.g. `infra_watchparty-net`), which isn't stable across
+    # how the stack gets invoked. Traefik auto-detects the single network it's attached to instead.
+
+log:
+  level: INFO

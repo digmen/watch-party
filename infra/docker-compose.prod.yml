@@ -1,0 +1,97 @@
+# Prod overlay: Traefik + cloudflared + the real backend/frontend images.
+services:
+  traefik:
+    # Pinned to >=3.6.1: earlier v3.x hardcodes Docker API v1.24 in its docker-provider client,
+    # which Docker Engine 29.x rejects (minimum supported API is 1.44) with an opaque empty-body
+    # "Error response from daemon:" — v3.6.1 added auto-negotiation against the daemon's actual
+    # supported range. See traefik/traefik#12257/#12420.
+    image: traefik:v3.6
+    restart: unless-stopped
+    command:
+      - "--configFile=/etc/traefik/traefik.yml"
+    ports:
+      - "80:80"
+    volumes:
+      - ./traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - watchparty-net
+    mem_limit: 64m
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      # Container-network hostnames — override whatever localhost-based values .env has for
+      # host-mode dev (see infra/docker-compose.dev.yml).
+      DATABASE_URL: postgres://${POSTGRES_USER:-watchparty}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-watchparty}
+      REDIS_URL: redis://redis:6379
+      VIDEO_CACHE_PATH: /data/video-cache
+    volumes:
+      - video-cache:/data/video-cache
+    networks:
+      - watchparty-net
+    mem_limit: 300m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    labels:
+      - traefik.enable=true
+      # Everything Nest-routed lives under /api (see setGlobalPrefix in main.ts) — the other two
+      # rules cover the two routes registered directly on the raw Fastify instance, which bypass
+      # Nest's router (and so the /api prefix) entirely: the CSRF token endpoint and the Google
+      # OAuth start-redirect. /socket.io is fastify-socket.io, also outside Nest's router.
+      - "traefik.http.routers.backend.rule=PathPrefix(`/api`) || PathPrefix(`/auth/csrf-token`) || PathPrefix(`/auth/google`) || PathPrefix(`/socket.io`)"
+      - traefik.http.routers.backend.entrypoints=web
+      - traefik.http.services.backend.loadbalancer.server.port=3000
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: apps/frontend/Dockerfile
+    restart: unless-stopped
+    networks:
+      - watchparty-net
+    mem_limit: 32m
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - traefik.http.routers.frontend.entrypoints=web
+      - traefik.http.routers.frontend.priority=1
+      - traefik.http.services.frontend.loadbalancer.server.port=80
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    # No TUNNEL_TOKEN / named-tunnel config — omitting it is exactly what puts cloudflared into
+    # Quick Tunnel mode (random *.trycloudflare.com hostname, no Cloudflare account needed).
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://traefik:80
+    networks:
+      - watchparty-net
+    mem_limit: 64m
+    depends_on:
+      traefik:
+        condition: service_healthy
+    # No HEALTHCHECK: cloudflare/cloudflared ships a single static binary with no shell and no
+    # wget/curl (confirmed via `docker exec` — even /bin/sh is absent), so a Docker exec-form
+    # healthcheck has nothing to run. Nothing else `depends_on` this service's health, and
+    # `restart: unless-stopped` already covers crash recovery.
+
+volumes:
+  video-cache:

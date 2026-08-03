@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+# Unlike .gitignore, a bare pattern here only matches at the context root — apps/frontend/.env
+# etc. need the explicit **/ prefix to be excluded at any depth too.
+.env
+**/.env
+*.log
+**/*.log
+infra/video-cache
+infra/postgres-data
+infra/redis-data

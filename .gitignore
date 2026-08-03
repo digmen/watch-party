@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+!.env.example
+*.log
+.DS_Store
+bun.lock.bak
+/infra/video-cache/
+/infra/postgres-data/
+/infra/redis-data/
+.video-cache/
+.turbo/
+coverage/
+playwright-report/
+test-results/
