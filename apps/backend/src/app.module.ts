@@ -7,6 +7,7 @@ import { ConfigModule as AppConfigModule } from "./config/config.module";
 import type { Env } from "./config/env.schema";
 import { DrizzleModule } from "./database/drizzle.module";
 import { AuthModule } from "./modules/auth/auth.module";
+import { ChatModule } from "./modules/chat/chat.module";
 import { GatewayModule } from "./modules/gateway/gateway.module";
 import { HealthModule } from "./modules/health/health.module";
 import { RoomsModule } from "./modules/rooms/rooms.module";
@@ -47,6 +48,7 @@ function parseRedisUrl(redisUrl: string): { host: string; port: number; password
     RoomsModule,
     GatewayModule,
     VideoModule,
+    ChatModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

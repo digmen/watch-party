@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from "vue";
+import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import type { VideoAssetDto } from "@watch-party/shared";
 import { usePlayerStore } from "../stores/player.store";
 import { useAuthStore } from "../stores/auth.store";
+import { useChatStore } from "../stores/chat.store";
 import { roomsApi } from "../api/rooms.api";
 import { videosApi } from "../api/videos.api";
 import { API_ORIGIN } from "../api/client";
@@ -13,6 +14,7 @@ const route = useRoute();
 const router = useRouter();
 const player = usePlayerStore();
 const auth = useAuthStore();
+const chat = useChatStore();
 
 const roomId = route.params.id as string;
 const displaySeconds = ref(0);
@@ -20,6 +22,8 @@ const videoAsset = ref<VideoAssetDto | null>(null);
 const sourceUrlInput = ref("");
 const addingVideo = ref(false);
 const addVideoError = ref<string | null>(null);
+const chatInput = ref("");
+const chatLog = ref<HTMLElement | null>(null);
 
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -61,6 +65,7 @@ onMounted(async () => {
   // this, only the creator could ever be a member and the whole "watch together" premise breaks.
   await roomsApi.join(roomId);
   await player.enterRoom(roomId);
+  await chat.enterRoom(roomId);
 
   const { video } = await videosApi.latestForRoom(roomId);
   if (video) {
@@ -79,7 +84,22 @@ onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer);
   if (statusPollTimer) clearInterval(statusPollTimer);
   player.leaveRoom();
+  chat.leaveRoom();
 });
+
+watch(
+  () => chat.messages.length,
+  () => {
+    nextTick(() => {
+      if (chatLog.value) chatLog.value.scrollTop = chatLog.value.scrollHeight;
+    });
+  },
+);
+
+function submitChatMessage() {
+  chat.send(chatInput.value);
+  chatInput.value = "";
+}
 
 function togglePlay() {
   const userId = auth.user!.id;
@@ -135,6 +155,19 @@ function leave() {
         <li v-for="m in player.members" :key="m.userId">{{ m.displayName }}</li>
       </ul>
     </section>
+
+    <section class="chat">
+      <h2>Чат</h2>
+      <div ref="chatLog" class="chat-log">
+        <p v-for="m in chat.messages" :key="m.id" class="chat-message">
+          <span class="chat-author">{{ m.displayName }}:</span> {{ m.body }}
+        </p>
+      </div>
+      <form class="chat-form" @submit.prevent="submitChatMessage">
+        <input v-model="chatInput" type="text" maxlength="2000" placeholder="Написать в чат…" />
+        <button type="submit" :disabled="!chatInput.trim()">Отправить</button>
+      </form>
+    </section>
   </main>
 </template>
 
@@ -185,5 +218,33 @@ function leave() {
 .error {
   color: #d33;
   width: 100%;
+}
+.chat {
+  width: 100%;
+  text-align: left;
+}
+.chat-log {
+  height: 220px;
+  overflow-y: auto;
+  border: 1px solid #cdd6e0;
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  background: #f7f9fb;
+}
+.chat-message {
+  margin: 0.25rem 0;
+  word-break: break-word;
+}
+.chat-author {
+  font-weight: 600;
+  color: #345;
+}
+.chat-form {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+.chat-form input {
+  flex: 1;
 }
 </style>

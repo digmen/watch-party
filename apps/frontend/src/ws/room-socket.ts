@@ -1,4 +1,5 @@
 import {
+  type ChatMessageDto,
   type HeartbeatEvent,
   type PauseEvent,
   type PlayEvent,
@@ -15,6 +16,7 @@ const TIME_SYNC_INTERVAL_MS = 15000;
 type PlaybackHandler = (event: PlayEvent | PauseEvent | SeekEvent) => void;
 type HeartbeatHandler = (event: HeartbeatEvent) => void;
 type PresenceHandler = (event: PresenceUpdate) => void;
+type ChatHandler = (message: ChatMessageDto) => void;
 
 export class RoomSocket {
   private socket: Socket | null = null;
@@ -67,6 +69,14 @@ export class RoomSocket {
 
   emitSeek(event: SeekEvent & { roomId: string }): void {
     this.socket?.emit(SocketEvents.PlayerSeek, event);
+  }
+
+  sendChatMessage(roomId: string, body: string): void {
+    this.socket?.emit(SocketEvents.ChatMessage, { roomId, body });
+  }
+
+  onChatMessage(handler: ChatHandler): void {
+    this.socket?.on(SocketEvents.ChatMessage, handler);
   }
 
   onPlay(handler: PlaybackHandler): void {

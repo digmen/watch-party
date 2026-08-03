@@ -14,11 +14,14 @@ import {
   type PauseEvent,
   type PlayEvent,
   type SeekEvent,
+  SendChatMessageSchema,
   SocketEvents,
   type TimeSyncRequest,
 } from "@watch-party/shared";
 import type { Server, Socket } from "socket.io";
 import type { Env } from "../../config/env.schema";
+import { toChatMessageDto } from "../chat/chat.presenter";
+import { ChatService } from "../chat/chat.service";
 import { RoomsService } from "../rooms/rooms.service";
 import { PlaybackStateService } from "./playback-state.service";
 import { PresenceService } from "./presence.service";
@@ -45,6 +48,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     private readonly rooms: RoomsService,
     private readonly presence: PresenceService,
     private readonly playbackState: PlaybackStateService,
+    private readonly chat: ChatService,
   ) {}
 
   afterInit(server: Server) {
@@ -164,6 +168,18 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   @SubscribeMessage(SocketEvents.TimeSync)
   onTimeSync(@ConnectedSocket() socket: Socket, @MessageBody() body: TimeSyncRequest) {
     socket.emit(SocketEvents.TimeSync, { clientSentMs: body.clientSentMs, serverTimeMs: Date.now() });
+  }
+
+  @SubscribeMessage(SocketEvents.ChatMessage)
+  async onChatMessage(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; body: string }) {
+    const userId = (socket.data as SocketData).userId;
+    if (!(await this.rooms.isMember(body.roomId, userId))) return;
+
+    const parsed = SendChatMessageSchema.safeParse({ body: body.body });
+    if (!parsed.success) return;
+
+    const row = await this.chat.post(body.roomId, userId, parsed.data.body);
+    this.server.to(body.roomId).emit(SocketEvents.ChatMessage, toChatMessageDto(row));
   }
 
   private async broadcastPresence(roomId: string) {

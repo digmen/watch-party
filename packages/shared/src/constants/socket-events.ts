@@ -7,6 +7,7 @@ export const SocketEvents = {
   PlayerSeek: "player:seek",
   PlayerHeartbeat: "player:heartbeat",
   TimeSync: "time:sync",
+  ChatMessage: "chat:message",
 } as const;
 
 export type SocketEventName = (typeof SocketEvents)[keyof typeof SocketEvents];
