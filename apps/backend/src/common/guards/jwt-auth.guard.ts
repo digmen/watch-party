@@ -6,7 +6,9 @@ import type { Env } from "../../config/env.schema";
 
 export interface AuthenticatedUser {
   sub: string;
-  email: string;
+  email: string | null;
+  isGuest: boolean;
+  guestRoomId: string | null;
 }
 
 // Hand-rolled instead of a passport-jwt strategy: @nestjs/passport doesn't reliably work under
@@ -25,10 +27,18 @@ export class JwtAuthGuard implements CanActivate {
     if (!token) throw new UnauthorizedException("Missing access token");
 
     try {
-      const payload = await this.jwt.verifyAsync<AuthenticatedUser>(token, {
+      const payload = await this.jwt.verifyAsync<Partial<AuthenticatedUser> & { sub: string }>(token, {
         secret: this.config.get("JWT_ACCESS_SECRET", { infer: true }),
       });
-      request.user = payload;
+      // Normalized rather than assigned straight through: tokens minted before guests existed
+      // carry no isGuest claim, and they all belong to real accounts. Defaulting to false is both
+      // correct for them and fail-safe (an absent claim never grants guest-only leniency).
+      request.user = {
+        sub: payload.sub,
+        email: payload.email ?? null,
+        isGuest: payload.isGuest === true,
+        guestRoomId: payload.guestRoomId ?? null,
+      };
       return true;
     } catch {
       throw new UnauthorizedException("Invalid or expired access token");

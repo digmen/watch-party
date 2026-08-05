@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Only the two public marketing pages belong here. Rooms are private and ephemeral, /login has
+  nothing to index, and the API isn't a page at all.
+
+  The <loc> values are relative because this project has no stable hostname yet: it is published
+  through a Cloudflare Quick Tunnel whose *.trycloudflare.com address changes on every restart.
+  Search engines want absolute URLs here — so this file becomes genuinely useful only once the
+  app is served from a real domain, at which point these should be rewritten with that origin
+  (see VITE_PUBLIC_ORIGIN in src/seo.ts, which drives the matching canonical/og:url tags).
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+  <url>
+    <loc>/about</loc>
+    <changefreq>monthly</changefreq>
+    <priority>0.5</priority>
+  </url>
+</urlset>

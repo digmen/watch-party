@@ -23,7 +23,9 @@ RUN bun run --filter '@watch-party/shared' build \
 # serves the pre-made .gz sibling (gzip_static on) instead of spending prod CPU compressing on
 # every response. (Brotli would compress further but needs ngx_brotli, absent from stock nginx —
 # a possible follow-up, not worth compiling a custom nginx build for right now.)
-RUN find apps/frontend/dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' \) \
+RUN find apps/frontend/dist -type f \
+      \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' \
+         -o -name '*.txt' -o -name '*.xml' -o -name '*.webmanifest' \) \
       -exec gzip --best --keep --force {} \;
 
 FROM nginx:1.27-alpine AS runtime

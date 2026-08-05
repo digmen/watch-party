@@ -6,16 +6,21 @@ reloads and multiple backend replicas. Built as a monorepo to show a real engine
 end to end (real auth, a real realtime gateway, a real video pipeline, real Docker multi-stage
 builds), not a demo script.
 
-**Live status**: the full stack — auth, rooms, realtime sync, and video streaming — is built and
-has been verified end to end through a real deployment (Docker Compose + Traefik + a Cloudflare
-Tunnel). See [Roadmap](#roadmap) for what's done and what's next.
+**Live status**: the full stack — auth, rooms, realtime sync, video streaming, chat, and guest
+access — is built and has been verified end to end through a real deployment (Docker Compose +
+Traefik + a Cloudflare Tunnel). See [CHANGELOG.md](CHANGELOG.md) for what changed most recently,
+[TODO.md](TODO.md) for what's still open, and [Roadmap](#roadmap) for the milestone view.
 
 ## Features
 
+- **Watch together without an account.** Send someone the room link; they enter a display name and
+  they're in. No email, no password — the room UUID *is* the invite. Guests can watch, chat and
+  drive playback in that one room, and nothing else.
 - **Auth**: email + password (Argon2id via `Bun.password`) and Google OAuth, JWT access/refresh
   tokens in httpOnly cookies, CSRF double-submit protection, refresh-token rotation with replay
   detection.
-- **Rooms**: create a room, invite others by ID, join/leave, per-room membership and roles.
+- **Rooms**: create a room, share it by link, join/leave, per-room membership and roles, live
+  in-room chat.
 - **Realtime sync**: a WebSocket gateway broadcasts play/pause/seek to everyone in a room, with a
   server-authoritative playback clock and client-side clock-drift correction (soft
   `playbackRate` nudges for small drift, hard seeks past ~300ms) — verified to stay within tens
@@ -24,7 +29,13 @@ Tunnel). See [Roadmap](#roadmap) for what's done and what's next.
 - **Video pipeline**: paste a direct `.mp4`/`.m3u8`/`.mpd` URL; the backend classifies it, then
   either remuxes it into HLS with `ffmpeg` (direct files, `-c copy` — no re-encode) or transparently
   proxies + caches HLS/DASH segments on first request. Every viewer after the first is served from
-  cache, not from the origin.
+  cache, not from the origin. Swapping in a different video mid-session is a normal operation —
+  everyone in the room picks it up over the websocket without reloading.
+- **ok.ru and VK links** resolve through `yt-dlp`, including the request headers those CDNs
+  require (without a real browser `User-Agent` they answer `400`).
+- **A public front door**: a landing page and an about page explain the product to someone who has
+  never seen it, with per-route meta, JSON-LD, `robots.txt` and `sitemap.xml`. Room pages are
+  `noindex` — they're private and ephemeral.
 - **No domain required**: a Cloudflare Quick Tunnel exposes the app on a random `*.trycloudflare.com`
   URL — no DNS, no port forwarding, no Cloudflare account.
 
@@ -32,13 +43,13 @@ Tunnel). See [Roadmap](#roadmap) for what's done and what's next.
 
 | Layer | Choice |
 | --- | --- |
-| Frontend | Vue 3 (Composition API) + Vite, Pinia, `hls.js`, `socket.io-client` |
+| Frontend | Vue 3 (Composition API) + Vite, Pinia, `hls.js`, `socket.io-client`, `@unhead/vue` |
 | Backend | NestJS on **Fastify** (not Express), Drizzle ORM, BullMQ, `ioredis` |
 | Realtime | `fastify-socket.io` + a custom Nest `IoAdapter` + `@socket.io/redis-adapter` (works around a real Fastify/socket.io incompatibility — see `apps/backend/src/modules/gateway/fastify-redis-io.adapter.ts`) |
 | Data | PostgreSQL 16, Redis 7 |
-| Video | `ffmpeg` (remux), a transparent HLS/DASH segment cache |
+| Video | `ffmpeg` (remux), `yt-dlp` (ok.ru/VK resolution), a transparent HLS/DASH segment cache |
 | Package manager / runtime | Bun (workspaces, no Turborepo/Nx) |
-| Containers | Docker multi-stage builds, `oven/bun:1-slim`, `nginx:1.27-alpine` |
+| Containers | Docker multi-stage builds, `oven/bun:1-alpine`, `nginx:1.27-alpine` |
 | Edge / public access | Traefik (path-based routing) + Cloudflare Tunnel (Quick Tunnel mode) |
 | Shared contracts | zod schemas in `packages/shared`, consumed by both frontend and backend |
 
@@ -82,6 +93,17 @@ to real random values (not the `change-me` placeholders) before running this aga
 public. Google OAuth is optional — the app runs fine with just email/password if
 `GOOGLE_OAUTH_CLIENT_ID` is left blank.
 
+Two knobs worth knowing about, both with sane defaults in `.env.example`:
+`MAX_GUESTS_PER_ROOM` (how many people can join one room by link) and `GUEST_TTL_DAYS` (how long
+an inactive guest account survives before the nightly cleanup removes it).
+
+Canonical URLs, `og:url` and absolute sitemap entries need one stable public origin, and a Quick
+Tunnel hostname is random and changes on every restart — so they are switched off unless
+`VITE_PUBLIC_ORIGIN` is set at build time. Everything else (titles, descriptions, JSON-LD,
+`robots.txt`) works regardless. See the first item in [TODO.md](TODO.md): the variable is read by
+the app but not yet plumbed through the Docker build, so today it can only be set for a local
+`vite build`.
+
 ## Architecture notes worth reading
 
 A few decisions here aren't the "default tutorial" way of doing things, on purpose:
@@ -104,14 +126,23 @@ A few decisions here aren't the "default tutorial" way of doing things, on purpo
 
 ## Known limitations
 
+Full list with reasoning in [TODO.md](TODO.md). The ones most likely to bite you:
+
 - The HLS/DASH proxy handles classic one-segment-per-file playlists (what the built-in `ffmpeg`
   remux also produces). It does not yet handle fMP4/CMAF playlists that address segments by byte
   range (`#EXT-X-BYTERANGE`) inside one file, or multi-bitrate master playlists — pointing it at
   one of those will fail cleanly rather than silently mis-play.
 - One "current video" per room (last one added wins) — a real queue is a small, natural extension
   of the existing `room_videos` table, just not built yet.
-- Arbitrary web pages (not direct media URLs) aren't supported — the resolver classifies those as
-  `needs_extraction` and reports a clear error rather than attempting to scrape them.
+- Arbitrary web pages aren't supported. Direct media URLs work, and ok.ru/VK go through `yt-dlp`;
+  a general film-hosting page is classified `needs_extraction` and reported as a clear error
+  rather than scraped.
+- **The video cache is never evicted** — `VIDEO_CACHE_TTL_HOURS` is read from the environment and
+  currently enforced by nothing, so the cache volume grows until the disk does.
+- **Playback is authorized per asset, not per room**: knowing an asset UUID is enough to pull that
+  stream from another room. See [SECURITY.md](SECURITY.md).
+- `trustProxy` is off, so the HTTP rate limiter sees every request as coming from one IP (the
+  tunnel). Guest creation compensates with a per-room counter in Redis; nothing else does.
 
 ## Legal note
 
@@ -127,9 +158,12 @@ responsible for only pointing it at sources you have the right to redistribute.
 - [x] **M2** — rooms, WebSocket gateway, Redis pub/sub, presence, cross-instance sync verified
 - [x] **M3** — video pipeline (ffmpeg remux + HLS/DASH cache), real playback sync in two tabs
 - [x] **M4** — Docker multi-stage images, Traefik routing, public access via Cloudflare Quick Tunnel
-- [ ] **M5** — CI, contributing docs, image hardening pass *(in progress — this is what you're reading)*
-- [ ] **M6** (stretch) — named tunnel + real domain, in-room chat, headless-browser mode for
-      arbitrary sites, observability (Prometheus/Grafana)
+- [x] **M5** — CI (`.github/workflows/ci.yml`), contributing docs, image hardening pass
+- [x] **M6** — in-room chat, guest access by link, public landing/about pages, dark design system,
+      SEO foundation, video-pipeline reliability fixes, SSRF hardening, `yt-dlp` for ok.ru/VK
+- [ ] **M7** — named tunnel + real domain, video-cache eviction, signed playback tokens,
+      headless-browser mode for arbitrary sites, observability (Prometheus/Grafana).
+      Broken out with reasoning in [TODO.md](TODO.md).
 
 ## Contributing
 

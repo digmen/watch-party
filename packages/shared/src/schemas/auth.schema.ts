@@ -14,8 +14,25 @@ export type LoginDto = z.infer<typeof LoginSchema>;
 
 export const UserSchema = z.object({
   id: z.string().uuid(),
-  email: z.string().email(),
+  // Null for guests — they join with a display name only (see GuestJoinSchema below).
+  email: z.string().email().nullable(),
   displayName: z.string(),
+  isGuest: z.boolean(),
+  guestRoomId: z.string().uuid().nullable(),
   createdAt: z.string().datetime(),
 });
 export type UserDto = z.infer<typeof UserSchema>;
+
+export const GuestJoinSchema = z.object({
+  roomId: z.string().uuid(),
+  // The \p{Cc}\p{Cf} block rejects control and format characters — zero-width joiners and
+  // right-to-left overrides would otherwise let a guest render an invisible name, or spoof
+  // someone else's, in the chat and presence list.
+  displayName: z
+    .string()
+    .trim()
+    .min(1)
+    .max(32)
+    .regex(/^[^\p{Cc}\p{Cf}]+$/u, "Имя содержит недопустимые символы"),
+});
+export type GuestJoinDto = z.infer<typeof GuestJoinSchema>;

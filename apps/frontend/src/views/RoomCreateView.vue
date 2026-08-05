@@ -27,33 +27,49 @@ async function submit() {
 <template>
   <main class="create">
     <h1>Новая комната</h1>
-    <form @submit.prevent="submit">
+    <p class="lede">Назовите её как угодно — название увидят те, кого вы позовёте.</p>
+
+    <form class="card" @submit.prevent="submit">
       <label>
         Название
-        <input v-model="name" required maxlength="80" placeholder="Movie night" />
+        <input v-model="name" required maxlength="80" placeholder="Вечер пятницы" autofocus />
       </label>
       <p v-if="error" class="error">{{ error }}</p>
-      <button type="submit" :disabled="submitting">Создать</button>
+      <button type="submit" :disabled="submitting">{{ submitting ? "Создаём…" : "Создать" }}</button>
     </form>
-    <RouterLink to="/">Назад к списку</RouterLink>
+
+    <p class="back"><RouterLink to="/rooms">← К списку комнат</RouterLink></p>
   </main>
 </template>
 
 <style scoped>
 .create {
-  max-width: 320px;
-  margin: 4rem auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
+  max-width: var(--container-narrow);
+  margin: 0 auto;
+  padding: var(--space-10) var(--space-4);
+}
+h1 {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-2);
+}
+.lede {
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-6);
 }
 form {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: var(--space-4);
 }
-.error {
-  color: #d33;
-  margin: 0;
+label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+.back {
+  margin-top: var(--space-6);
+  font-size: var(--text-sm);
 }
 </style>

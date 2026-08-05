@@ -1,4 +1,4 @@
-import type { PauseEvent, PlayEvent, PresenceUpdate, SeekEvent } from "@watch-party/shared";
+import type { PauseEvent, PlayEvent, PresenceUpdate, SeekEvent, VideoAssetDto } from "@watch-party/shared";
 import { defineStore } from "pinia";
 import { expectedPosition, type RoomPlaybackState } from "../ws/clock-sync";
 import { roomSocket } from "../ws/room-socket";
@@ -46,6 +46,12 @@ export const usePlayerStore = defineStore("player", {
 
       const result = await roomSocket.joinRoom(roomId);
       if ("playback" in result) this.playback = result.playback;
+    },
+
+    // Must be called after enterRoom: the socket doesn't exist until then, and roomSocket's
+    // handlers are registered against `this.socket?`, so subscribing earlier silently no-ops.
+    onVideoChanged(handler: (video: VideoAssetDto) => void) {
+      roomSocket.onVideoChanged(handler);
     },
 
     applyEvent(event: { positionSec: number; originTimestampMs: number }, status: "playing" | "paused") {

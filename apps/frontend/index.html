@@ -4,23 +4,57 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="theme-color" content="#141821" />
+    <meta name="theme-color" content="#0e1116" />
 
-    <title>Watch Party — совместный просмотр видео в реальном времени</title>
+    <!--
+      A room URL is effectively a password — anyone holding it can join. Without this, navigating
+      from a room to any external link would hand that URL over in the Referer header.
+    -->
+    <meta name="referrer" content="no-referrer" />
+
+    <!--
+      These describe the landing page specifically, and they are duplicated by @unhead/vue at
+      runtime (see src/seo.ts). The duplication is deliberate, not an oversight: link-preview
+      crawlers (Telegram, Slack, Discord, Twitter) do not execute JavaScript, so they only ever
+      see what is literally in this file. Client-side tags are for the browser and for crawlers
+      that do render.
+    -->
+    <title>Watch Party — смотрите видео вместе с друзьями онлайн</title>
     <meta
       name="description"
-      content="Watch Party — открытый проект для совместного просмотра видео: создавайте комнаты, делитесь ссылкой и смотрите синхронно с друзьями. Vue 3, NestJS, PostgreSQL, Redis."
+      content="Совместный просмотр видео в реальном времени: создайте комнату, отправьте ссылку другу и смотрите синхронно — пауза и перемотка у всех сразу, рядом чат. Друзьям регистрация не нужна."
     />
 
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="Watch Party — совместный просмотр видео" />
+    <meta property="og:site_name" content="Watch Party" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:title" content="Watch Party — смотрите видео вместе с друзьями" />
     <meta
       property="og:description"
-      content="Открытый проект для синхронного просмотра видео в комнатах: создайте комнату, поделитесь ссылкой, смотрите вместе."
+      content="Отправьте другу ссылку — и вы окажетесь на одной секунде фильма. Пауза у одного останавливает у всех."
     />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="Watch Party" />
-    <meta name="twitter:description" content="Совместный просмотр видео в реальном времени — открытый исходный код." />
+    <meta property="og:image" content="/og-image.svg" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Watch Party — смотрите видео вместе с друзьями" />
+    <meta
+      name="twitter:description"
+      content="Отправьте другу ссылку — и вы окажетесь на одной секунде фильма. Пауза у одного останавливает у всех."
+    />
+    <meta name="twitter:image" content="/og-image.svg" />
+
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Watch Party",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Any",
+        "inLanguage": "ru",
+        "description": "Сервис для совместного синхронного просмотра видео: комнаты, общий плеер и чат. Гостям не нужна регистрация.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" }
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

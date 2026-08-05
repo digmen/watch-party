@@ -1,0 +1,63 @@
+/*
+ * Design tokens — the single source of truth for colour, spacing and type across the app.
+ *
+ * Dark by default and only dark: this is a video product, and a bright chrome around a dark
+ * player is exactly the thing that hurts to look at in the evening, which is when people
+ * actually watch films together.
+ */
+:root {
+  /* Surfaces, darkest to lightest. The steps are deliberately small — big jumps read as
+     "different app", small ones read as depth. */
+  --color-bg: #0e1116;
+  --color-surface: #161b22;
+  --color-surface-raised: #1d2430;
+  --color-border: #272f3d;
+  --color-border-strong: #37414f;
+
+  /* Warm accent against the cold background: it reads as "cinema seat", and it keeps the one
+     thing we want clicked (create / watch) unmistakable. */
+  --color-accent: #ff6b5a;
+  --color-accent-hover: #ff8474;
+  --color-accent-contrast: #1a0d0a;
+
+  --color-text: #e9edf3;
+  --color-text-muted: #98a3b3;
+  --color-text-faint: #6b7688;
+
+  --color-danger: #ff6b6b;
+  --color-success: #4ade80;
+
+  /* 4px base scale. Named by step, not by use, so nothing is misleading when reused. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-8: 3rem;
+  --space-10: 4rem;
+  --space-12: 6rem;
+
+  --text-xs: 0.78rem;
+  --text-sm: 0.88rem;
+  --text-base: 1rem;
+  --text-lg: 1.15rem;
+  --text-xl: 1.4rem;
+  --text-2xl: 1.85rem;
+  --text-3xl: 2.4rem;
+  --text-hero: clamp(2.2rem, 6vw, 3.6rem);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  --shadow-lg: 0 24px 60px rgb(0 0 0 / 0.45);
+
+  --transition: 150ms ease;
+
+  --container: 68rem;
+  --container-narrow: 34rem;
+}

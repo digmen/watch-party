@@ -33,6 +33,7 @@ const HEARTBEAT_LOCK_TTL_SEC = 5;
 interface SocketData {
   userId: string;
   displayName: string;
+  isGuest: boolean;
 }
 
 @WebSocketGateway()
@@ -58,10 +59,12 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
         const token = cookies["access_token"];
         if (!token) throw new Error("missing access_token cookie");
 
-        const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(token, {
+        const payload = await this.jwt.verifyAsync<{ sub: string; isGuest?: boolean }>(token, {
           secret: this.config.get("JWT_ACCESS_SECRET", { infer: true }),
         });
-        (socket.data as SocketData).userId = payload.sub;
+        const data = socket.data as SocketData;
+        data.userId = payload.sub;
+        data.isGuest = payload.isGuest === true;
         next();
       } catch {
         next(new Error("unauthorized"));
@@ -180,6 +183,12 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     const row = await this.chat.post(body.roomId, userId, parsed.data.body);
     this.server.to(body.roomId).emit(SocketEvents.ChatMessage, toChatMessageDto(row));
+  }
+
+  // Called from the video pipeline (VideoService on add, VideoPrefetchProcessor once an asset is
+  // ready) so everyone already sitting in the room switches over without reloading.
+  broadcastVideoChanged(roomId: string, video: unknown): void {
+    this.server.to(roomId).emit(SocketEvents.VideoChanged, video);
   }
 
   private async broadcastPresence(roomId: string) {

@@ -1,10 +1,13 @@
-import { Processor, WorkerHost } from "@nestjs/bullmq";
+import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Logger } from "@nestjs/common";
 import type { Job } from "bullmq";
 import { eq } from "drizzle-orm";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
-import { videoAssets } from "../../database/schema";
+import { roomVideos, videoAssets } from "../../database/schema";
+import { RoomGateway } from "../gateway/room.gateway";
+import { toVideoAssetDto } from "./video.presenter";
 import { VideoCacheService } from "./video-cache.service";
+import { VideoResolverService } from "./video-resolver.service";
 
 export interface PrefetchJobData {
   assetId: string;
@@ -12,6 +15,11 @@ export interface PrefetchJobData {
   sourceUrl: string;
   kind: "direct_mp4" | "hls" | "dash";
 }
+
+// Generous, but finite. A remux is bounded by download speed, not CPU (`-c copy`), so a big file
+// on a slow origin legitimately takes many minutes — but "no timeout at all" means one stalled
+// TCP read holds the single concurrency slot forever and every later video queues behind it.
+const REMUX_TIMEOUT_MS = 30 * 60_000;
 
 // Remux (`-c copy`), never re-encode: this just repackages the container into HLS segments
 // without touching the video/audio streams, so it costs a fraction of a second of CPU per second
@@ -24,47 +32,134 @@ export class VideoPrefetchProcessor extends WorkerHost {
   constructor(
     @Inject(DRIZZLE_CLIENT) private readonly db: DrizzleDb,
     private readonly cache: VideoCacheService,
+    private readonly resolver: VideoResolverService,
+    private readonly gateway: RoomGateway,
   ) {
     super();
   }
 
-  async process(job: Job<PrefetchJobData>): Promise<void> {
-    const { assetId, assetHash, sourceUrl, kind } = job.data;
-    await this.db.update(videoAssets).set({ status: "processing" }).where(eq(videoAssets.id, assetId));
+  // Push the asset's final state to every room showing it. Without this, "Готовим видео…" stays
+  // on screen until someone reloads — the client has no other way to learn the job finished, and
+  // a failure would look identical to still-working.
+  private async announce(assetId: string): Promise<void> {
+    const [asset] = await this.db.select().from(videoAssets).where(eq(videoAssets.id, assetId)).limit(1);
+    if (!asset) return;
 
-    if (kind === "hls" || kind === "dash") {
-      await this.prepareManifestPassthrough(assetId, assetHash, sourceUrl);
-      return;
-    }
+    const rooms = await this.db
+      .selectDistinct({ roomId: roomVideos.roomId })
+      .from(roomVideos)
+      .where(eq(roomVideos.videoAssetId, assetId));
 
-    await this.remuxDirectMp4(assetId, assetHash, sourceUrl);
+    const dto = toVideoAssetDto(asset);
+    for (const { roomId } of rooms) this.gateway.broadcastVideoChanged(roomId, dto);
   }
 
-  private async prepareManifestPassthrough(assetId: string, assetHash: string, sourceUrl: string): Promise<void> {
+  // BullMQ removes a job once it finishes, so these listeners are the only chance to record a
+  // failure the `process()` body never got to handle itself: an uncaught throw, or — the case
+  // that actually bit us — the worker dying mid-remux on redeploy, which leaves the job "stalled"
+  // and the asset row pinned at `processing` with nobody left alive to correct it.
+  @OnWorkerEvent("failed")
+  async onFailed(job: Job<PrefetchJobData> | undefined, err: Error) {
+    if (!job?.data?.assetId) return;
+    this.logger.error(`job for asset ${job.data.assetId} failed: ${err.message}`);
+    await this.markFailed(job.data.assetId, err.message);
+  }
+
+  // Informational only: BullMQ re-queues a stalled job by itself, and if it keeps stalling past
+  // maxStalledCount it ends up in "failed" — which the listener above already handles.
+  @OnWorkerEvent("stalled")
+  onStalled(jobId: string) {
+    this.logger.warn(`job ${jobId} stalled — worker likely died mid-processing; BullMQ will requeue`);
+  }
+
+  private async markFailed(assetId: string, reason: string): Promise<void> {
+    await this.db
+      .update(videoAssets)
+      .set({ status: "failed", failureReason: reason.slice(0, 2000) })
+      .where(eq(videoAssets.id, assetId));
+    await this.announce(assetId);
+  }
+
+  private async markReady(assetId: string, storagePath: string): Promise<void> {
+    await this.db.update(videoAssets).set({ status: "ready", storagePath }).where(eq(videoAssets.id, assetId));
+    await this.announce(assetId);
+  }
+
+  async process(job: Job<PrefetchJobData>): Promise<void> {
+    const { assetId, assetHash, sourceUrl } = job.data;
+    await this.db.update(videoAssets).set({ status: "processing" }).where(eq(videoAssets.id, assetId));
+
+    // Re-resolved here rather than trusting `job.data.kind`, which for an extractor-allowlist host
+    // (ok.ru, vk.com/vkvideo.ru) is only ever a provisional guess made by the fast, synchronous
+    // classifier in video.service.ts — the real kind and a fresh playable URL both come from
+    // yt-dlp, which takes too long (40-90s) to run in that HTTP request path. Stream tokens from
+    // those sites are also short-lived, so this has to be fresh at fetch time, not add-video time.
+    let kind: PrefetchJobData["kind"];
+    let playbackUrl: string;
+    let headers: Record<string, string>;
     try {
-      await this.cache.proxyManifest(sourceUrl, assetHash);
-      await this.db
-        .update(videoAssets)
-        .set({ status: "ready", storagePath: this.cache.dirFor(assetHash) })
-        .where(eq(videoAssets.id, assetId));
-      this.logger.log(`asset ${assetId} manifest proxied and ready`);
+      ({ kind, playbackUrl, headers } = await this.resolver.resolveForFetch(sourceUrl));
     } catch (err) {
-      this.logger.error(`manifest proxy failed for asset ${assetId}: ${(err as Error).message}`);
+      this.logger.error(`could not resolve a playable stream for asset ${assetId}: ${(err as Error).message}`);
       await this.db
         .update(videoAssets)
         .set({ status: "failed", failureReason: (err as Error).message.slice(0, 2000) })
         .where(eq(videoAssets.id, assetId));
+      return;
+    }
+    await this.db.update(videoAssets).set({ kind }).where(eq(videoAssets.id, assetId));
+
+    if (kind === "hls" || kind === "dash") {
+      await this.prepareManifestPassthrough(assetId, assetHash, playbackUrl, headers);
+      return;
+    }
+
+    await this.remuxDirectMp4(assetId, assetHash, playbackUrl, headers);
+  }
+
+  private async prepareManifestPassthrough(
+    assetId: string,
+    assetHash: string,
+    sourceUrl: string,
+    headers: Record<string, string>,
+  ): Promise<void> {
+    try {
+      await this.cache.proxyManifest(sourceUrl, assetHash, headers);
+      await this.markReady(assetId, this.cache.dirFor(assetHash));
+      this.logger.log(`asset ${assetId} manifest proxied and ready`);
+    } catch (err) {
+      this.logger.error(`manifest proxy failed for asset ${assetId}: ${(err as Error).message}`);
+      await this.markFailed(assetId, (err as Error).message);
     }
   }
 
-  private async remuxDirectMp4(assetId: string, assetHash: string, sourceUrl: string): Promise<void> {
+  private async remuxDirectMp4(
+    assetId: string,
+    assetHash: string,
+    sourceUrl: string,
+    headers: Record<string, string>,
+  ): Promise<void> {
     this.logger.log(`remuxing asset ${assetId} (${sourceUrl})`);
     const cacheDir = await this.cache.ensureDir(assetHash);
+
+    // ffmpeg's own default User-Agent ("Lavf/<version>") gets the same HTTP 400 from ok.ru/vk's
+    // CDN that a bare fetch does — `-headers` has to precede `-i` (it's an input option) and needs
+    // a trailing CRLF per header, per ffmpeg's own `-headers` documentation.
+    const headerArgs =
+      Object.keys(headers).length > 0
+        ? [
+            "-headers",
+            `${Object.entries(headers)
+              .map(([k, v]) => `${k}: ${v}`)
+              .join("\r\n")}\r\n`,
+          ]
+        : [];
 
     const proc = Bun.spawn(
       [
         "ffmpeg",
         "-y",
+        ...headerArgs,
         "-i",
         sourceUrl,
         "-c",
@@ -84,22 +179,25 @@ export class VideoPrefetchProcessor extends WorkerHost {
       { stdout: "pipe", stderr: "pipe" },
     );
 
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      proc.kill();
+    }, REMUX_TIMEOUT_MS);
+
     const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+    clearTimeout(timeout);
 
     if (exitCode !== 0) {
-      const reason = stderrText.split("\n").slice(-10).join("\n");
-      this.logger.error(`ffmpeg failed for asset ${assetId} (exit ${exitCode}): ${reason}`);
-      await this.db
-        .update(videoAssets)
-        .set({ status: "failed", failureReason: reason.slice(0, 2000) })
-        .where(eq(videoAssets.id, assetId));
+      const reason = timedOut
+        ? `Источник отдаёт видео слишком медленно — обработка прервана по таймауту (${REMUX_TIMEOUT_MS / 60_000} мин).`
+        : stderrText.split("\n").slice(-10).join("\n");
+      this.logger.error(`ffmpeg failed for asset ${assetId} (exit ${exitCode}, timedOut=${timedOut}): ${reason}`);
+      await this.markFailed(assetId, reason);
       return;
     }
 
-    await this.db
-      .update(videoAssets)
-      .set({ status: "ready", storagePath: cacheDir })
-      .where(eq(videoAssets.id, assetId));
+    await this.markReady(assetId, cacheDir);
     this.logger.log(`asset ${assetId} ready at ${cacheDir}`);
   }
 }

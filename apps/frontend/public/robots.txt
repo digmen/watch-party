@@ -1,0 +1,10 @@
+# Rooms are private: the UUID in the URL is the invite credential, and the content behind it is
+# whatever a user pasted. Nothing under /rooms should ever be indexed.
+User-agent: *
+Allow: /$
+Allow: /about
+Disallow: /rooms
+Disallow: /login
+Disallow: /api/
+
+Sitemap: /sitemap.xml

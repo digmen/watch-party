@@ -6,9 +6,10 @@ import {
   type PresenceUpdate,
   type SeekEvent,
   SocketEvents,
+  type VideoAssetDto,
 } from "@watch-party/shared";
 import { io, type Socket } from "socket.io-client";
-import { API_ORIGIN } from "../api/client";
+import { API_ORIGIN, refreshSession } from "../api/client";
 import { ClockSync } from "./clock-sync";
 
 const TIME_SYNC_INTERVAL_MS = 15000;
@@ -17,11 +18,15 @@ type PlaybackHandler = (event: PlayEvent | PauseEvent | SeekEvent) => void;
 type HeartbeatHandler = (event: HeartbeatEvent) => void;
 type PresenceHandler = (event: PresenceUpdate) => void;
 type ChatHandler = (message: ChatMessageDto) => void;
+type VideoChangedHandler = (video: VideoAssetDto) => void;
 
 export class RoomSocket {
   private socket: Socket | null = null;
   readonly clockSync = new ClockSync();
   private timeSyncTimer: ReturnType<typeof setInterval> | null = null;
+  // socket.io fires connect_error on every retry attempt; without this latch a failing
+  // reconnect would queue a refresh per attempt and rotate the refresh token against itself.
+  private reconnectRefreshInFlight = false;
 
   connect(): Socket {
     if (this.socket) return this.socket;
@@ -30,6 +35,23 @@ export class RoomSocket {
     this.socket = io(API_ORIGIN || undefined, { withCredentials: true, transports: ["websocket"] });
 
     this.socket.on("connect", () => this.startTimeSync());
+
+    // The handshake authenticates from the access-token cookie, which expires after 15 minutes.
+    // A room that is simply playing a film issues no HTTP requests for hours, so nothing else
+    // refreshes that cookie — meaning any reconnect past the 15-minute mark is rejected and
+    // socket.io then retries forever with the same dead token. Guests live in exactly that state
+    // for a whole movie, so this is the difference between "sync survives a blip" and "sync
+    // silently dies partway through".
+    this.socket.on("connect_error", async () => {
+      if (this.reconnectRefreshInFlight) return;
+      this.reconnectRefreshInFlight = true;
+      try {
+        if (await refreshSession()) this.socket?.connect();
+      } finally {
+        this.reconnectRefreshInFlight = false;
+      }
+    });
+
     return this.socket;
   }
 
@@ -77,6 +99,10 @@ export class RoomSocket {
 
   onChatMessage(handler: ChatHandler): void {
     this.socket?.on(SocketEvents.ChatMessage, handler);
+  }
+
+  onVideoChanged(handler: VideoChangedHandler): void {
+    this.socket?.on(SocketEvents.VideoChanged, handler);
   }
 
   onPlay(handler: PlaybackHandler): void {

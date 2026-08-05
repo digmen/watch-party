@@ -40,7 +40,10 @@ FROM oven/bun:1-alpine AS runtime
 # unprivileged `bun` user below. Alpine's package (~130MB incl. deps) instead of Debian's apt build
 # (~450MB) — this only remuxes (`-c copy`), so the extra encoder libraries Debian's package pulls
 # in were pure waste anyway.
-RUN apk add --no-cache ffmpeg
+# yt-dlp resolves a real stream URL for the small allowlist of platforms in
+# video-resolver.service.ts (ok.ru, vk.com/vkvideo.ru) whose page URLs aren't themselves playable —
+# it does NOT enable arbitrary-page extraction, see the resolver's ALLOWED_EXTRACTOR_HOSTS.
+RUN apk add --no-cache ffmpeg yt-dlp
 
 WORKDIR /repo
 ENV NODE_ENV=production

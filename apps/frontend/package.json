@@ -12,6 +12,7 @@
     "typecheck": "vue-tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@unhead/vue": "^3.3.0",
     "@watch-party/shared": "workspace:*",
     "hls.js": "^1.5.20",
     "pinia": "^2.3.1",

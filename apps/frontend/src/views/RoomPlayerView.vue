@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { useRoute, useRouter } from "vue-router";
 import type { VideoAssetDto } from "@watch-party/shared";
-import { usePlayerStore } from "../stores/player.store";
-import { useAuthStore } from "../stores/auth.store";
-import { useChatStore } from "../stores/chat.store";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { API_ORIGIN } from "../api/client";
 import { roomsApi } from "../api/rooms.api";
 import { videosApi } from "../api/videos.api";
-import { API_ORIGIN } from "../api/client";
+import GuestJoinPrompt from "../components/GuestJoinPrompt.vue";
 import VideoPlayer from "../components/VideoPlayer.vue";
+import { usePageSeo } from "../seo";
+import { useAuthStore } from "../stores/auth.store";
+import { useChatStore } from "../stores/chat.store";
+import { usePlayerStore } from "../stores/player.store";
 
 const route = useRoute();
 const router = useRouter();
@@ -17,6 +19,16 @@ const auth = useAuthStore();
 const chat = useChatStore();
 
 const roomId = route.params.id as string;
+
+// A room is private (the UUID is the invite credential) and short-lived — it must never be
+// indexed, and its URL must never leak through a referrer to whatever the video links to.
+usePageSeo({
+  title: "Комната — Watch Party",
+  description: "Совместный просмотр видео в реальном времени.",
+  path: `/rooms/${roomId}`,
+  noindex: true,
+});
+
 const displaySeconds = ref(0);
 const videoAsset = ref<VideoAssetDto | null>(null);
 const sourceUrlInput = ref("");
@@ -25,23 +37,55 @@ const addVideoError = ref<string | null>(null);
 const chatInput = ref("");
 const chatLog = ref<HTMLElement | null>(null);
 
+const entering = ref(false);
+const entered = ref(false);
+const enterError = ref<string | null>(null);
+const changingVideo = ref(false);
+const copied = ref(false);
+
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
 const playerRef = ref<InstanceType<typeof VideoPlayer> | null>(null);
+
+const roomUrl = computed(() => `${window.location.origin}/rooms/${roomId}`);
+const isAlone = computed(() => player.members.length <= 1);
+// Guests watch what the host picked — the backend enforces this too (FullAccountGuard on
+// addVideo); this just keeps the UI honest rather than offering a button that would 403.
+const canManageVideo = computed(() => auth.isAuthenticated && !auth.isGuest);
+const showVideoForm = computed(
+  () => canManageVideo.value && (changingVideo.value || !videoAsset.value || videoAsset.value.status === "failed"),
+);
 
 function fullPlaybackUrl(video: VideoAssetDto): string {
   return `${API_ORIGIN}${video.playbackUrl}`;
 }
 
-function pollUntilSettled(assetId: string) {
+function stopPolling() {
   if (statusPollTimer) clearInterval(statusPollTimer);
+  statusPollTimer = null;
+}
+
+function pollUntilSettled(assetId: string) {
+  stopPolling();
   statusPollTimer = setInterval(async () => {
-    const { video } = await videosApi.getStatus(assetId);
-    videoAsset.value = video;
-    if (video.status === "ready" || video.status === "failed") {
-      if (statusPollTimer) clearInterval(statusPollTimer);
+    // An unhandled rejection in here doesn't just log noise — it skips the clearInterval below,
+    // so a failing request turns into an unkillable 2-second retry loop for the life of the page.
+    try {
+      const { video } = await videosApi.getStatus(assetId);
+      videoAsset.value = video;
+      if (video.status === "ready" || video.status === "failed") stopPolling();
+    } catch {
+      // apiFetch already tries to refresh an expired session before surfacing an error, so
+      // reaching here means polling genuinely can't continue (logged out, asset gone, backend
+      // down). Retrying on a timer wouldn't fix any of those.
+      stopPolling();
     }
   }, 2000);
+}
+
+function trackAsset(video: VideoAssetDto | null) {
+  videoAsset.value = video;
+  if (video && video.status !== "ready" && video.status !== "failed") pollUntilSettled(video.id);
 }
 
 async function submitVideo() {
@@ -49,40 +93,106 @@ async function submitVideo() {
   addVideoError.value = null;
   try {
     const { video } = await videosApi.add(roomId, { sourceUrl: sourceUrlInput.value });
-    videoAsset.value = video;
     sourceUrlInput.value = "";
-    if (video.status !== "ready" && video.status !== "failed") pollUntilSettled(video.id);
-  } catch {
-    addVideoError.value = "Не удалось добавить видео — проверьте ссылку";
+    changingVideo.value = false;
+    trackAsset(video);
+  } catch (err) {
+    addVideoError.value = err instanceof Error && err.message ? err.message : "Не удалось добавить видео";
   } finally {
     addingVideo.value = false;
   }
 }
 
-onMounted(async () => {
-  // Anyone with a valid account and the room link joins automatically — sharing the URL *is*
-  // the invite mechanism (see rooms.service.ts's `join`, idempotent for existing members). Without
-  // this, only the creator could ever be a member and the whole "watch together" premise breaks.
-  await roomsApi.join(roomId);
-  await player.enterRoom(roomId);
-  await chat.enterRoom(roomId);
-
-  const { video } = await videosApi.latestForRoom(roomId);
-  if (video) {
-    videoAsset.value = video;
-    if (video.status !== "ready" && video.status !== "failed") pollUntilSettled(video.id);
+async function copyRoomLink() {
+  try {
+    await navigator.clipboard.writeText(roomUrl.value);
+    copied.value = true;
+    setTimeout(() => {
+      copied.value = false;
+    }, 2000);
+  } catch {
+    // Clipboard access can be refused (insecure context, permissions) — leave the URL visible in
+    // the input next to the button so it can still be copied by hand.
   }
+}
 
-  tickTimer = setInterval(() => {
-    displaySeconds.value = player.getDisplayPositionSec();
-    playerRef.value?.applyCorrection(displaySeconds.value);
-    playerRef.value?.setPlaying(player.playback.status === "playing");
-  }, 200);
+// Everything that requires a session. Split out of onMounted so the guest prompt can call it
+// again after the guest signs in, without a page reload.
+async function enterRoom() {
+  entering.value = true;
+  enterError.value = null;
+  try {
+    await roomsApi.join(roomId);
+    await player.enterRoom(roomId);
+    await chat.enterRoom(roomId);
+
+    // Subscribed here rather than in setup(): the socket only exists once enterRoom has run, and
+    // roomSocket registers handlers against an optional socket — subscribing earlier is a no-op
+    // that fails silently.
+    player.onVideoChanged((video) => {
+      changingVideo.value = false;
+      trackAsset(video);
+    });
+
+    const { video } = await videosApi.latestForRoom(roomId);
+    trackAsset(video);
+
+    // A room whose video is added later must not sit dead: keep re-checking until one appears.
+    // (The video:changed socket event covers the live case; this covers arriving in between.)
+    if (!video) pollForFirstVideo();
+
+    tickTimer = setInterval(() => {
+      displaySeconds.value = player.getDisplayPositionSec();
+      playerRef.value?.applyCorrection(displaySeconds.value);
+      playerRef.value?.setPlaying(player.playback.status === "playing");
+    }, 200);
+
+    entered.value = true;
+  } catch {
+    enterError.value = "Не удалось войти в комнату. Обновите страницу или попросите новую ссылку.";
+  } finally {
+    entering.value = false;
+  }
+}
+
+let firstVideoTimer: ReturnType<typeof setInterval> | null = null;
+function pollForFirstVideo() {
+  if (firstVideoTimer) return;
+  firstVideoTimer = setInterval(async () => {
+    try {
+      const { video } = await videosApi.latestForRoom(roomId);
+      if (video) {
+        if (firstVideoTimer) clearInterval(firstVideoTimer);
+        firstVideoTimer = null;
+        trackAsset(video);
+      }
+    } catch {
+      if (firstVideoTimer) clearInterval(firstVideoTimer);
+      firstVideoTimer = null;
+    }
+  }, 3000);
+}
+
+async function handleGuestJoin(displayName: string) {
+  entering.value = true;
+  try {
+    await auth.joinAsGuest(roomId, displayName);
+    await enterRoom();
+  } catch {
+    // auth.error already carries the message; the prompt renders it.
+  } finally {
+    entering.value = false;
+  }
+}
+
+onMounted(() => {
+  if (auth.isAuthenticated) return enterRoom();
 });
 
 onUnmounted(() => {
   if (tickTimer) clearInterval(tickTimer);
-  if (statusPollTimer) clearInterval(statusPollTimer);
+  if (firstVideoTimer) clearInterval(firstVideoTimer);
+  stopPolling();
   player.leaveRoom();
   chat.leaveRoom();
 });
@@ -96,155 +206,271 @@ watch(
   },
 );
 
+function togglePlay() {
+  if (!auth.user) return;
+  if (player.playback.status === "playing") {
+    player.pause(auth.user.id);
+  } else {
+    player.play(auth.user.id);
+  }
+}
+
 function submitChatMessage() {
   chat.send(chatInput.value);
   chatInput.value = "";
 }
 
-function togglePlay() {
-  const userId = auth.user!.id;
-  if (player.playback.status === "playing") {
-    player.pause(userId);
-  } else {
-    player.play(userId);
-  }
-}
-
 function leave() {
-  router.push("/");
+  router.push(auth.isGuest ? "/" : "/rooms");
 }
 </script>
 
 <template>
-  <main class="room">
-    <button class="back" @click="leave">← К списку комнат</button>
+  <GuestJoinPrompt
+    v-if="!auth.isAuthenticated"
+    :submitting="entering"
+    :error="auth.error"
+    @submit="handleGuestJoin"
+  />
 
-    <VideoPlayer v-if="videoAsset?.status === 'ready'" ref="playerRef" :src="fullPlaybackUrl(videoAsset)" />
+  <p v-else-if="enterError" class="enter-error error" role="alert">{{ enterError }}</p>
 
-    <form v-else-if="!videoAsset || videoAsset.status === 'failed'" class="add-video" @submit.prevent="submitVideo">
-      <input
-        v-model="sourceUrlInput"
-        type="url"
-        required
-        placeholder="Прямая ссылка на .mp4 или .m3u8"
-      />
-      <button type="submit" :disabled="addingVideo">Добавить видео</button>
-      <p v-if="videoAsset?.status === 'failed'" class="error">{{ videoAsset.failureReason }}</p>
-      <p v-if="addVideoError" class="error">{{ addVideoError }}</p>
-    </form>
+  <main v-else class="room">
+    <header class="room-head">
+      <button class="quiet" @click="leave">← {{ auth.isGuest ? "На главную" : "К комнатам" }}</button>
 
-    <p v-else class="preparing">
-      Готовим видео на сервере ({{ videoAsset.status }})… обычно занимает несколько секунд.
+      <div class="share">
+        <input :value="roomUrl" readonly aria-label="Ссылка на комнату" @focus="($event.target as HTMLInputElement).select()" />
+        <button class="ghost" @click="copyRoomLink">{{ copied ? "Скопировано" : "Скопировать ссылку" }}</button>
+      </div>
+    </header>
+
+    <p v-if="isAlone" class="invite-hint">
+      Пока вы один. Отправьте ссылку другу — ему хватит имени, регистрация не нужна.
     </p>
 
-    <!--
-      Debug readout, not just for looks: this is the same server-authoritative position the
-      video element is being corrected against — with two tabs open, both numbers (and both
-      videos, once one is loaded) stay in lockstep.
-    -->
-    <div class="fake-timer">{{ displaySeconds.toFixed(2) }}s</div>
-    <p class="status">{{ player.playback.status === "playing" ? "▶ идёт" : "⏸ пауза" }}</p>
+    <section class="stage">
+      <div class="player-area">
+        <!--
+          The form is tested BEFORE the player on purpose. As a `v-else-if` after it, the
+          "ready" branch always won and the replace-video form was unreachable — which is exactly
+          the bug this was meant to fix: once a video was playing there was no way to swap it.
+        -->
+        <form v-if="showVideoForm" class="add-video card" @submit.prevent="submitVideo">
+          <h2>Что смотрим?</h2>
+          <input v-model="sourceUrlInput" type="url" required placeholder="Ссылка на .mp4, .m3u8, ok.ru или VK Видео" />
+          <div class="row">
+            <button type="submit" :disabled="addingVideo">{{ addingVideo ? "Добавляем…" : "Добавить видео" }}</button>
+            <button v-if="changingVideo" type="button" class="quiet" @click="changingVideo = false">Отмена</button>
+          </div>
+          <p v-if="videoAsset?.status === 'failed'" class="error">{{ videoAsset.failureReason }}</p>
+          <p v-if="addVideoError" class="error">{{ addVideoError }}</p>
+        </form>
 
-    <button class="toggle" @click="togglePlay">
-      {{ player.playback.status === "playing" ? "Пауза" : "Play" }}
-    </button>
+        <VideoPlayer
+          v-else-if="videoAsset?.status === 'ready'"
+          ref="playerRef"
+          :src="fullPlaybackUrl(videoAsset)"
+        />
 
-    <section class="members">
-      <h2>В комнате</h2>
-      <ul>
-        <li v-for="m in player.members" :key="m.userId">{{ m.displayName }}</li>
-      </ul>
-    </section>
+        <div v-else-if="videoAsset" class="preparing card">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>Готовим видео на сервере — сервер скачивает поток, чтобы он не тормозил ни у кого из вас.</p>
+        </div>
 
-    <section class="chat">
-      <h2>Чат</h2>
-      <div ref="chatLog" class="chat-log">
-        <p v-for="m in chat.messages" :key="m.id" class="chat-message">
-          <span class="chat-author">{{ m.displayName }}:</span> {{ m.body }}
-        </p>
+        <p v-else class="preparing card">Ждём, пока хост добавит видео…</p>
+
+        <div v-if="videoAsset?.status === 'ready' && !changingVideo" class="controls">
+          <button @click="togglePlay">{{ player.playback.status === "playing" ? "Пауза" : "Смотреть" }}</button>
+          <span class="clock">{{ displaySeconds.toFixed(1) }}s</span>
+          <button
+            v-if="canManageVideo && !changingVideo"
+            class="quiet"
+            @click="changingVideo = true"
+          >
+            Заменить видео
+          </button>
+        </div>
       </div>
-      <form class="chat-form" @submit.prevent="submitChatMessage">
-        <input v-model="chatInput" type="text" maxlength="2000" placeholder="Написать в чат…" />
-        <button type="submit" :disabled="!chatInput.trim()">Отправить</button>
-      </form>
+
+      <aside class="side">
+        <section class="members card">
+          <h2>В комнате · {{ player.members.length }}</h2>
+          <ul>
+            <li v-for="m in player.members" :key="m.userId">{{ m.displayName }}</li>
+          </ul>
+        </section>
+
+        <section class="chat card">
+          <h2>Чат</h2>
+          <div ref="chatLog" class="chat-log">
+            <p v-if="chat.messages.length === 0" class="chat-empty">Пока тихо. Напишите первым.</p>
+            <p v-for="m in chat.messages" :key="m.id" class="chat-message">
+              <span class="chat-author">{{ m.displayName }}</span>{{ m.body }}
+            </p>
+          </div>
+          <form class="chat-form" @submit.prevent="submitChatMessage">
+            <input v-model="chatInput" type="text" maxlength="2000" placeholder="Написать…" aria-label="Сообщение" />
+            <button type="submit" :disabled="!chatInput.trim()">→</button>
+          </form>
+        </section>
+      </aside>
     </section>
   </main>
 </template>
 
 <style scoped>
 .room {
-  max-width: 640px;
-  margin: 2rem auto;
-  padding: 0 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  align-items: center;
+  max-width: var(--container);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-10);
+}
+.enter-error {
+  max-width: var(--container-narrow);
+  margin: var(--space-10) auto;
   text-align: center;
 }
-.back {
-  align-self: flex-start;
-  background: none;
-  border: none;
-  cursor: pointer;
-  color: #567;
+.room-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+}
+.share {
+  display: flex;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 16rem;
+  max-width: 32rem;
+}
+.share input {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+.share button {
+  white-space: nowrap;
+}
+.invite-hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
+}
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20rem;
+  gap: var(--space-5);
+  align-items: start;
+}
+@media (max-width: 60rem) {
+  .stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.player-area {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
 }
 .add-video {
-  width: 100%;
   display: flex;
-  gap: 0.5rem;
+  flex-direction: column;
+  gap: var(--space-3);
 }
-.add-video input {
-  flex: 1;
+.add-video h2 {
+  font-size: var(--text-lg);
+}
+.row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 .preparing {
-  color: #777;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
 }
-.fake-timer {
-  font-size: 2rem;
-  font-variant-numeric: tabular-nums;
-  color: #789;
+.spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: var(--radius-full);
+  animation: spin 700ms linear infinite;
+  flex-shrink: 0;
 }
-.toggle {
-  padding: 0.5rem 1.5rem;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
-.members {
-  width: 100%;
+.controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.clock {
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
+}
+
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.side h2 {
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+  margin-bottom: var(--space-3);
 }
 .members ul {
   list-style: none;
   padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
 }
-.error {
-  color: #d33;
-  width: 100%;
-}
-.chat {
-  width: 100%;
-  text-align: left;
+.members li {
+  background: var(--color-surface-raised);
+  border-radius: var(--radius-full);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-sm);
 }
 .chat-log {
-  height: 220px;
+  height: 16rem;
   overflow-y: auto;
-  border: 1px solid #cdd6e0;
-  border-radius: 6px;
-  padding: 0.5rem 0.75rem;
-  background: #f7f9fb;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.chat-empty {
+  color: var(--color-text-faint);
+  font-size: var(--text-sm);
 }
 .chat-message {
-  margin: 0.25rem 0;
+  font-size: var(--text-sm);
   word-break: break-word;
 }
 .chat-author {
+  color: var(--color-accent);
   font-weight: 600;
-  color: #345;
+  margin-right: var(--space-2);
 }
 .chat-form {
-  margin-top: 0.5rem;
   display: flex;
-  gap: 0.5rem;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
 }
-.chat-form input {
-  flex: 1;
+.chat-form button {
+  padding: var(--space-3) var(--space-4);
 }
 </style>

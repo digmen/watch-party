@@ -1,0 +1,65 @@
+# TODO
+
+What is not done yet, and why it was left. Grouped by whether it blocks something real, is a
+known gap we chose to live with, or is simply nice to have.
+
+Anything already shipped is in [CHANGELOG.md](CHANGELOG.md).
+
+## Blocking / next up
+
+These are not "someday" items — each one is something that looks finished from the outside and
+is not.
+
+- [ ] **`VITE_PUBLIC_ORIGIN` cannot actually be set.** `apps/frontend/src/seo.ts` reads it, and
+      canonical / `og:url` / sitemap URLs stay off until it has a value — but the frontend is
+      built inside Docker and `apps/frontend/Dockerfile` declares no `ARG`/`ENV` for it, and
+      `infra/docker-compose.prod.yml` passes no `build.args`. So the switch exists and nothing
+      can flip it. Needs: `ARG VITE_PUBLIC_ORIGIN` + `ENV` in the build stage, `build.args` in
+      the prod compose file, and the key added to `ImportMetaEnv` in
+      `apps/frontend/src/vite-env.d.ts`.
+- [ ] **`og:image` points at an SVG.** `apps/frontend/public/og-image.svg` is referenced from
+      `index.html` and `seo.ts`, but Telegram, Slack, X and Facebook do not render SVG for link
+      previews — they show nothing. Needs a 1200×630 PNG. Playwright is already a dev dependency,
+      so rendering an HTML template to PNG and committing the result is the cheap path.
+- [ ] **The video cache is never evicted.** `VIDEO_CACHE_TTL_HOURS` is parsed in
+      `apps/backend/src/config/env.schema.ts` and used nowhere; `lastAccessedAt` is written in
+      `video.service.ts` and read by nobody. The cache volume grows without bound until the disk
+      fills. `ScheduleModule` is already wired — copy the Redis `NX`-lock pattern from
+      `modules/guest/guest-cleanup.service.ts` so replicas don't race each other.
+
+## Known gaps
+
+Deliberate trade-offs. Documented so the reasoning survives, not because they're fine forever.
+
+- [ ] **Playback is authorized per asset, not per room.** A member of *any* room who knows an
+      asset UUID can pull that stream. The honest fix is a signed short-TTL playback token;
+      checking membership on every segment would be a database round trip per segment, which is
+      not worth it. See [SECURITY.md](SECURITY.md).
+- [ ] **`trustProxy` is off**, so `@nestjs/throttler` sees one source IP behind
+      `cloudflared` → Traefik and rate-limits everyone as a single caller. Guest creation works
+      around this with a per-room Redis counter; nothing else does.
+- [ ] **One video per room.** Last one added wins. The `room_videos` table already has a
+      `queuePosition` column that nothing reads — a real queue is a small extension, just not
+      built.
+- [ ] **HLS support is deliberately narrow.** One-segment-per-file playlists only (what the
+      built-in `ffmpeg` remux produces). No `#EXT-X-BYTERANGE`/fMP4, no multi-bitrate master
+      playlists. Pointing it at one of those fails cleanly rather than mis-playing.
+- [ ] **Arbitrary pages are not extracted.** Direct media URLs work, and ok.ru/VK work through
+      `yt-dlp`; a general film-hosting page (`kinogo.online/...` and friends) is classified
+      `needs_extraction` and reported as an error. Doing it properly means a headless browser in
+      the backend image, which is a real size and maintenance cost.
+- [ ] **Backend image is ~664 MB** — `ffmpeg` plus `yt-dlp` plus their Python runtime. Fine for a
+      single-box deployment, worth trimming before this is ever pulled repeatedly.
+- [ ] **No end-to-end tests in CI.** The guest/playback/chat flow has been verified through the
+      live tunnel by hand (15 assertions, all passing) but those scripts were throwaway. CI runs
+      build, lint, typecheck, unit tests and both Docker builds — no browser.
+
+## Nice to have
+
+- [ ] Named Cloudflare tunnel + a real domain. This also switches SEO on (see the first blocking
+      item) and makes room links stable across restarts.
+- [ ] Observability: Prometheus metrics + Grafana. Right now the only signal is container logs.
+- [ ] Brotli precompression alongside gzip — needs `ngx_brotli`, absent from stock nginx.
+- [ ] Prerendering the landing page for crawlers that don't execute JavaScript. Static meta and
+      JSON-LD in `index.html` cover link previews; full prerender would need Node in the runtime
+      image, which today is bare nginx.

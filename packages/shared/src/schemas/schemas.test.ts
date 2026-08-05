@@ -75,4 +75,26 @@ describe("video schema", () => {
   test("accepts a direct video URL", () => {
     expect(AddVideoSchema.safeParse({ sourceUrl: "https://example.com/video.mp4" }).success).toBe(true);
   });
+
+  // The backend fetches this URL server-side, so the schema is a security boundary, not just
+  // input hygiene — each of these was reachable before and would have made the backend issue a
+  // request into its own private network.
+  test.each([
+    ["container service name", "http://redis:6379/"],
+    ["the database", "http://postgres:5432/"],
+    ["loopback", "http://127.0.0.1/video.mp4"],
+    ["localhost by name", "http://localhost:3000/video.mp4"],
+    ["private class A", "http://10.0.0.5/video.mp4"],
+    ["private class B", "http://172.16.4.2/video.mp4"],
+    ["private class C", "http://192.168.1.10/video.mp4"],
+    ["cloud metadata endpoint", "http://169.254.169.254/latest/meta-data/"],
+    ["IPv6 loopback", "http://[::1]/video.mp4"],
+    ["a non-http scheme", "file:///etc/passwd"],
+  ])("rejects %s", (_label, sourceUrl) => {
+    expect(AddVideoSchema.safeParse({ sourceUrl }).success).toBe(false);
+  });
+
+  test("still accepts a public host that merely looks numeric", () => {
+    expect(AddVideoSchema.safeParse({ sourceUrl: "https://8.8.8.8/video.mp4" }).success).toBe(true);
+  });
 });

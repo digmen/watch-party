@@ -26,7 +26,20 @@ bun run test
 ```
 
 All four run in CI (`.github/workflows/ci.yml`), along with a check that both Dockerfiles still
-build.
+build. There are no browser/end-to-end tests in CI — anything touching sync, guests or playback
+has to be exercised by hand (see below).
+
+## Testing multi-user flows by hand
+
+Two tabs in the same browser profile share cookies, so a second tab is *not* a second user — it
+will silently reuse the first session and everything will look like it works. Use a private/
+incognito window (or a second browser) for the second participant.
+
+The guest path specifically: create a room and add a video as a logged-in user, copy the room
+link, open it in a clean private window, enter a name. That window should never see a login form.
+Worth checking every time you touch auth: a guest must still be a guest after 15 minutes — the
+refresh cycle re-signs claims from the database row, so a flag stored only in the token would
+quietly promote them to a full account.
 
 ## Conventions
 

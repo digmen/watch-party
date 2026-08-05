@@ -1,9 +1,11 @@
 import { createReadStream } from "node:fs";
-import { Body, Controller, Get, Param, Post, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, ForbiddenException, Get, Param, Post, Res, UseGuards } from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyReply } from "fastify";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
+import { FullAccountGuard } from "../../common/guards/full-account.guard";
 import { type AuthenticatedUser, JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { RoomsService } from "../rooms/rooms.service";
 import { AddVideoDto } from "./dto/add-video.dto";
 import { toVideoAssetDto } from "./video.presenter";
 import { VideoService } from "./video.service";
@@ -19,16 +21,33 @@ export class VideoProxyController {
   constructor(
     private readonly videos: VideoService,
     private readonly cache: VideoCacheService,
+    private readonly rooms: RoomsService,
   ) {}
 
+  // Membership is checked here, not just at the room level: without it any authenticated user who
+  // learns a room UUID could attach a video to someone else's room — and since `sourceUrl` is
+  // fetched server-side, that made this endpoint a way to aim the backend at arbitrary hosts.
+  // AddVideoSchema now rejects private/internal targets, and this rejects non-members.
+  private async assertMember(roomId: string, userId: string): Promise<void> {
+    if (!(await this.rooms.isMember(roomId, userId))) throw new ForbiddenException("Not a member of this room");
+  }
+
+  // Guests watch what the host picked; they don't get to point the server at new URLs. This also
+  // keeps the fetch-a-user-supplied-URL surface behind a real account.
   @Post("rooms/:roomId/videos")
+  @UseGuards(FullAccountGuard)
   async addVideo(@Param("roomId") roomId: string, @Body() dto: AddVideoDto, @CurrentUser() user: AuthenticatedUser) {
+    await this.assertMember(roomId, user.sub);
     const asset = await this.videos.addVideoToRoom(roomId, dto.sourceUrl, user.sub);
     return { video: toVideoAssetDto(asset) };
   }
 
+  // Also member-gated: this hands out the asset UUID, which is the only thing standing between a
+  // stranger and the playlist/segment routes below (those are room-agnostic by design — see the
+  // known-limitation note in README).
   @Get("rooms/:roomId/videos/latest")
-  async getLatestForRoom(@Param("roomId") roomId: string) {
+  async getLatestForRoom(@Param("roomId") roomId: string, @CurrentUser() user: AuthenticatedUser) {
+    await this.assertMember(roomId, user.sub);
     const asset = await this.videos.getLatestForRoom(roomId);
     return { video: asset ? toVideoAssetDto(asset) : null };
   }

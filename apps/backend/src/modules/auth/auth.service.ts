@@ -85,7 +85,11 @@ export class AuthService {
 
   async issueTokenPair(user: User): Promise<TokenPair> {
     const accessToken = await this.jwt.signAsync(
-      { sub: user.id, email: user.email },
+      // Guest claims are read off the DB row here, deliberately — NOT stamped once at the guest
+      // endpoint. `rotateRefreshToken` re-issues through this same method every 15 minutes, so
+      // sourcing them anywhere else would silently promote a guest to a full account on their
+      // first token refresh.
+      { sub: user.id, email: user.email, isGuest: user.isGuest, guestRoomId: user.guestRoomId },
       { secret: this.config.get("JWT_ACCESS_SECRET", { infer: true }), expiresIn: ACCESS_TOKEN_TTL },
     );
 

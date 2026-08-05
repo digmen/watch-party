@@ -20,6 +20,11 @@ export const EnvSchema = z.object({
   VIDEO_CACHE_PATH: z.string().default("/data/video-cache"),
   VIDEO_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(24),
   MAX_CONCURRENT_STREAMS: z.coerce.number().int().positive().default(8),
+
+  // A room link is a bearer credential, so guest creation needs a ceiling that doesn't depend on
+  // per-IP throttling (which is unreliable behind the tunnel — see the trustProxy note in main.ts).
+  MAX_GUESTS_PER_ROOM: z.coerce.number().int().positive().default(20),
+  GUEST_TTL_DAYS: z.coerce.number().int().positive().default(7),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

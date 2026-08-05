@@ -6,6 +6,8 @@ export function toUserDto(user: User): UserDto {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
+    isGuest: user.isGuest,
+    guestRoomId: user.guestRoomId,
     createdAt: user.createdAt.toISOString(),
   };
 }
