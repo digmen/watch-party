@@ -1,0 +1,46 @@
+# Прод-оверлей для домена, где edge уже занят живым Caddy (VLESS-путь, платящие клиенты).
+# Отличие от docker-compose.prod.yml: без Traefik и без cloudflared — backend/frontend слушают
+# только 127.0.0.1, наружу их выводит существующий Caddy своими handle-блоками.
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: apps/backend/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-watchparty}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-watchparty}
+      REDIS_URL: redis://redis:6379
+      VIDEO_CACHE_PATH: /data/video-cache
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - video-cache:/data/video-cache
+    networks:
+      - watchparty-net
+    mem_limit: 300m
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://localhost:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: apps/frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    networks:
+      - watchparty-net
+    mem_limit: 32m
+
+volumes:
+  video-cache:
