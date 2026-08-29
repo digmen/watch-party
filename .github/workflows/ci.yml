@@ -53,3 +53,20 @@ jobs:
           file: apps/frontend/Dockerfile
           push: false
           tags: watch-party-frontend:ci
+
+  # Деплой только при пуше в master, и только после того как всё выше зелёное — битый
+  # тест/сборка не должны попасть на прод. Хост с этим доменом держит ещё и VPN другого
+  # клиента (свой Caddy/Xray, свои платящие пользователи) — деплой намеренно ограничен
+  # только этой директорией, к Caddyfile/Xray отношения не имеет и их не трогает.
+  deploy:
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    needs: [build-lint-typecheck-test, docker-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.WATCHPARTY_SSH_HOST }}
+          username: root
+          key: ${{ secrets.WATCHPARTY_SSH_KEY }}
+          script: bash /root/watch-party/infra/scripts/deploy.sh
