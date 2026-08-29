@@ -5,6 +5,7 @@ import { GatewayModule } from "../gateway/gateway.module";
 import { RoomsModule } from "../rooms/rooms.module";
 import { VideoService } from "./video.service";
 import { VideoCacheService } from "./video-cache.service";
+import { VideoCacheCleanupService } from "./video-cache-cleanup.service";
 import { VideoPrefetchProcessor } from "./video-prefetch.processor";
 import { VideoProxyController } from "./video-proxy.controller";
 import { VideoResolverService } from "./video-resolver.service";
@@ -12,6 +13,6 @@ import { VideoResolverService } from "./video-resolver.service";
 @Module({
   imports: [AuthModule, RoomsModule, GatewayModule, BullModule.registerQueue({ name: "video-prefetch" })],
   controllers: [VideoProxyController],
-  providers: [VideoResolverService, VideoCacheService, VideoPrefetchProcessor, VideoService],
+  providers: [VideoResolverService, VideoCacheService, VideoCacheCleanupService, VideoPrefetchProcessor, VideoService],
 })
 export class VideoModule {}

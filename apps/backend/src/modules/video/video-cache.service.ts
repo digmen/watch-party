@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -110,5 +110,11 @@ export class VideoCacheService {
 
     this.logger.log(`cached segment ${token} for asset ${assetHash}`);
     return segmentPath;
+  }
+
+  // Best-effort: если каталог уже снесён руками/не создавался (ассет упал на "failed" до
+  // первого сегмента) — это не ошибка эвикции, а норма.
+  async evictDir(assetHash: string): Promise<void> {
+    await rm(this.dirFor(assetHash), { recursive: true, force: true });
   }
 }
