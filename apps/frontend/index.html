@@ -25,15 +25,21 @@
       content="Совместный просмотр видео в реальном времени: создайте комнату, отправьте ссылку другу и смотрите синхронно — пауза и перемотка у всех сразу, рядом чат. Друзьям регистрация не нужна."
     />
 
+    <!-- og:url/image below are the same absolute kerry.zone origin as VITE_PUBLIC_ORIGIN in
+         src/seo.ts. Hardcoded here on purpose: this file has no build-time templating, and a
+         relative og:image breaks the preview entirely for crawlers that read it literally
+         (Telegram/Slack/Discord resolve og:image against nothing, not against this page's URL). -->
+    <link rel="canonical" href="https://kerry.zone/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Watch Party" />
     <meta property="og:locale" content="ru_RU" />
+    <meta property="og:url" content="https://kerry.zone/" />
     <meta property="og:title" content="Watch Party — смотрите видео вместе с друзьями" />
     <meta
       property="og:description"
       content="Отправьте другу ссылку — и вы окажетесь на одной секунде фильма. Пауза у одного останавливает у всех."
     />
-    <meta property="og:image" content="/og-image.svg" />
+    <meta property="og:image" content="https://kerry.zone/og-image.svg" />
 
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Watch Party — смотрите видео вместе с друзьями" />
@@ -41,7 +47,7 @@
       name="twitter:description"
       content="Отправьте другу ссылку — и вы окажетесь на одной секунде фильма. Пауза у одного останавливает у всех."
     />
-    <meta name="twitter:image" content="/og-image.svg" />
+    <meta name="twitter:image" content="https://kerry.zone/og-image.svg" />
 
     <script type="application/ld+json">
       {

@@ -1,4 +1,4 @@
-import { useSeoMeta } from "@unhead/vue";
+import { useHead, useSeoMeta } from "@unhead/vue";
 
 // Canonical URLs, og:url and the sitemap all need one stable absolute base — and the Cloudflare
 // Quick Tunnel hostname is random and changes on every restart, so there genuinely isn't one
@@ -24,6 +24,15 @@ interface PageSeo {
 
 export function usePageSeo({ title, description, path, noindex }: PageSeo): void {
   const url = absoluteUrl(path);
+
+  // Canonical link — useSeoMeta only emits <meta> tags, this one is a <link>, and there was no
+  // canonical tag anywhere in the codebase until now. Without it, search engines have no signal
+  // for which URL is authoritative when the same page is reachable через несколько путей
+  // (домен, поддомены, query-параметры комнаты) — рискует дробить рейтинг между ними.
+  // Omitted (not emitted with an empty href) when the origin is unset, same rule as og:url below.
+  useHead({
+    link: url ? [{ rel: "canonical", href: url }] : [],
+  });
 
   useSeoMeta({
     title,

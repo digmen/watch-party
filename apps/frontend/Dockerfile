@@ -12,6 +12,11 @@ RUN bun install --frozen-lockfile
 
 FROM oven/bun:1-slim AS build
 WORKDIR /repo
+# Vite bakes VITE_* env vars into the bundle at build time, not runtime — must arrive as a build
+# arg here. Empty default keeps the image buildable without it (canonical/og:url/sitemap simply
+# stay relative, see src/seo.ts), so this isn't a hard requirement for every environment.
+ARG VITE_PUBLIC_ORIGIN=
+ENV VITE_PUBLIC_ORIGIN=${VITE_PUBLIC_ORIGIN}
 COPY --from=deps /repo/node_modules ./node_modules
 COPY --from=deps /repo/apps/frontend/node_modules ./apps/frontend/node_modules
 COPY --from=deps /repo/packages/shared/node_modules ./packages/shared/node_modules
