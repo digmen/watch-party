@@ -40,5 +40,21 @@ for i in $(seq 1 20); do
   sleep 3
 done
 
-curl -fs -o /dev/null http://127.0.0.1:8080/
+# Тот же паттерн, что и у backend выше — frontend раньше проверялся одной попыткой сразу
+# после `up -d`, без ожидания: контейнер помечен Started/Healthy заметно раньше, чем nginx
+# внутри реально готов принять соединение, и одиночный curl иногда ловил это окно (реальный
+# случай 01.09 — деплой прошёл полностью успешно, все правки на месте, а CI покраснел на
+# ровном месте из-за гонки именно тут).
+for i in $(seq 1 20); do
+  if curl -fs -o /dev/null http://127.0.0.1:8080/; then
+    echo "frontend healthy"
+    break
+  fi
+  if [ "$i" -eq 20 ]; then
+    echo "frontend did not become healthy in time" >&2
+    exit 1
+  fi
+  sleep 3
+done
+
 echo "deploy ok"
