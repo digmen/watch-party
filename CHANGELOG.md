@@ -43,6 +43,11 @@ could never be replaced, and a container restart could strand a video in `proces
   served by a separate container that had none of this.
 - **SSRF regression tests** — 10 attack vectors plus a positive control in
   `packages/shared/src/schemas/schemas.test.ts`.
+- **Video cache eviction.** `VideoCacheCleanupService` (`apps/backend/src/modules/video/`) runs
+  hourly, walking `lastAccessedAt` and removing anything older than `VIDEO_CACHE_TTL_HOURS` from
+  disk and the database — the same Redis `NX`-lock pattern as `guest-cleanup.service.ts`, so
+  replicas don't race each other. Previously parsed and never applied; the cache volume grew
+  without bound.
 
 ### Fixed
 
@@ -73,6 +78,23 @@ could never be replaced, and a container restart could strand a video in `proces
   reconnects.
 - **ok.ru streams were misclassified** — the content-type check was case-sensitive and ok.ru sends
   `application/x-mpegURL`.
+- **`VITE_PUBLIC_ORIGIN` could not actually be set.** The SEO foundation above read it, but the
+  frontend is built inside Docker and neither `apps/frontend/Dockerfile` nor the Caddy prod
+  overlay (`infra/docker-compose.caddy.yml`) passed it through as a build arg — canonical,
+  `og:url` and the sitemap silently stayed off no matter what env the host set. Fixed with
+  `ARG`/`ENV VITE_PUBLIC_ORIGIN` in the build stage and `build.args` in the compose overlay, now
+  that the app has a stable domain (`kerry.zone`) to set it to.
+- **`og:image`/`twitter:image` were relative paths** (`/og-image.svg`) in the static `index.html`
+  fallback that link-preview crawlers actually read — the Open Graph spec requires an absolute
+  URL, so no preview image rendered anywhere. `sitemap.xml` had the same problem with its `<loc>`
+  entries. Both are absolute now. A canonical `<link>` tag did not exist anywhere in the codebase
+  before this — added via `useHead` for the client render and duplicated in static `index.html`
+  for non-JS crawlers, same reasoning as the existing OG/Twitter duplication there.
+- **`deploy.sh` could report a broken deploy as failed when it had actually succeeded.** The
+  backend health check retries for up to a minute; the frontend check was a single one-shot
+  `curl` right after `docker compose up`, which sometimes ran before nginx inside the container
+  was ready to accept connections — caught live when a fully working deploy still turned CI red.
+  Frontend now retries on the same schedule as backend.
 
 ### Security
 

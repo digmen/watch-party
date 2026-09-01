@@ -1,97 +1,187 @@
 <script setup lang="ts">
 import { usePageSeo } from "../seo";
+import { useAuthStore } from "../stores/auth.store";
+
+const auth = useAuthStore();
 
 usePageSeo({
-  title: "О проекте — Watch Party",
+  title: "О сервисе — Watch Party",
   description:
-    "Как устроен Watch Party: сервер сам скачивает и раздаёт видео, а плеер держит всех зрителей на одной секунде с поправкой на расхождение часов. Открытый код.",
+    "Watch Party — совместный просмотр видео для тех, кто далеко друг от друга. Бесплатно, с рекламой между сеансами; без рекламы — на платном плане.",
   path: "/about",
 });
 </script>
 
 <template>
   <main class="about">
-    <h1>О проекте</h1>
-
-    <p class="lede">
-      Watch Party — сервис для совместного просмотра видео. Вы создаёте комнату, вставляете ссылку
-      на видео и отправляете приглашение. Дальше плеер держит всех на одной секунде.
-    </p>
-
-    <section>
-      <h2>Зачем это</h2>
-      <p>
-        Смотреть кино вдвоём, когда вы в разных городах, обычно значит считать вслух «три, два,
-        один — пуск» и всё равно разъезжаться на пару секунд. Здесь позиция воспроизведения живёт
-        на сервере: он и есть источник правды, а клиенты к нему подстраиваются.
+    <section class="hero">
+      <p class="eyebrow">Наша миссия</p>
+      <h1>Расстояние — не повод смотреть порознь</h1>
+      <p class="lede">
+        Когда важные люди оказываются в разных городах или странах, вечер кино вдвоём обычно
+        превращается в «три, два, один — жми» и всё равно расходится на пару секунд. Watch Party
+        существует, чтобы это ощущалось так, будто вы на одном диване — даже когда между вами
+        тысячи километров.
       </p>
     </section>
 
-    <section>
-      <h2>Как это устроено</h2>
-      <p>
-        Сервер сам скачивает видео и нарезает его на фрагменты, а потом раздаёт зрителям из своего
-        кэша. Так источник не дёргают заново на каждого человека, и тот, кто подключился вторым,
-        получает видео быстрее первого.
-      </p>
-      <p>
-        Синхронизация учитывает, что часы на разных устройствах идут по-разному: клиент регулярно
-        сверяется с сервером и, если отстал на доли секунды, мягко подтягивает скорость
-        воспроизведения вместо рывка.
+    <section class="how">
+      <p class="eyebrow">Как это работает</p>
+      <div class="grid">
+        <article class="card">
+          <h2>Один источник правды</h2>
+          <p>
+            Позиция плеера живёт на сервере, а не в чьём-то браузере. Все клиенты подстраиваются
+            под него мягко, без рывков — даже если у кого-то на телефоне часы спешат.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Никаких «догоняю, подожди»</h2>
+          <p>
+            Видео скачивается и готовится один раз на сервере, а не для каждого зрителя заново —
+            тот, кто подключился вторым, третьим, десятым, получает поток так же быстро, как первый.
+          </p>
+        </article>
+        <article class="card">
+          <h2>Чат под рукой</h2>
+          <p>
+            Реакция на грустный момент, шутка на весь фильм, обсуждение — всё рядом с плеером,
+            история сохраняется, опоздавший увидит, что пропустил.
+          </p>
+        </article>
+      </div>
+    </section>
+
+    <section class="model">
+      <p class="eyebrow">Условия</p>
+      <h2>Бесплатно. Реклама — единственная плата</h2>
+      <p class="model-text">
+        Создавать комнаты, приглашать друзей и смотреть вместе — бесплатно, с короткой рекламой
+        между сеансами. Для тех, кто предпочитает смотреть совсем без остановок, будет платный план,
+        который просто убирает рекламу — ничего больше не меняется. Систему подписки ещё
+        разворачиваем, скоро будет доступна.
       </p>
     </section>
 
-    <section>
-      <h2>Что можно смотреть</h2>
+    <section class="watch">
+      <p class="eyebrow">Что можно смотреть</p>
       <p>
-        Прямые ссылки на видеофайлы, HLS- и DASH-потоки, а также страницы ok.ru и VK Видео.
-        Произвольные сайты со встроенными плеерами пока не поддерживаются.
+        Прямые ссылки на видеофайлы, HLS- и DASH-потоки, а также ok.ru и VK Видео. Страницы
+        со встроенными плеерами сторонних сайтов пока не поддерживаются.
       </p>
     </section>
 
-    <section>
-      <h2>Открытый код</h2>
-      <p>
-        Это открытый пет-проект: Vue 3 и Bun на фронте, NestJS на Fastify, PostgreSQL, Redis,
-        ffmpeg и Docker — на сервере. Он сделан как показательная инженерная работа, а не как
-        коммерческий сервис, и не размещает у себя никакого контента: видео проксируется по той
-        ссылке, которую даёт сам пользователь.
-      </p>
+    <section class="closing">
+      <h2>Позовите того, с кем давно собирались что-нибудь посмотреть</h2>
+      <RouterLink class="btn" :to="auth.isAuthenticated ? '/rooms' : '/login'">Создать комнату</RouterLink>
     </section>
-
-    <p class="back"><RouterLink to="/">← На главную</RouterLink></p>
   </main>
 </template>
 
 <style scoped>
 .about {
-  max-width: 44rem;
+  max-width: var(--container);
   margin: 0 auto;
   padding: var(--space-10) var(--space-4) var(--space-12);
 }
-h1 {
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-size: var(--text-xs);
+  color: var(--color-accent);
+  margin-bottom: var(--space-3);
+}
+
+.hero {
+  max-width: var(--container-narrow);
+  margin: 0 auto var(--space-10);
+  text-align: center;
+}
+.hero h1 {
   font-size: var(--text-3xl);
+  letter-spacing: -0.02em;
   margin-bottom: var(--space-4);
 }
 .lede {
   font-size: var(--text-lg);
   color: var(--color-text-muted);
-  margin-bottom: var(--space-8);
 }
-section {
-  margin-bottom: var(--space-6);
+
+.how {
+  padding: var(--space-8) 0;
 }
-h2 {
+.how .eyebrow {
+  text-align: center;
+  display: block;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-5);
+}
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
+}
+.card h2 {
+  font-size: var(--text-lg);
+  margin-bottom: var(--space-2);
+}
+.card p {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+
+.model {
+  max-width: var(--container-narrow);
+  margin: var(--space-8) auto;
+  text-align: center;
+  padding: var(--space-6);
+  background: var(--color-surface-raised);
+  border-radius: var(--radius-lg);
+}
+.model h2 {
   font-size: var(--text-xl);
   margin-bottom: var(--space-3);
 }
-section p + p {
-  margin-top: var(--space-3);
-}
-section p {
+.model-text {
   color: var(--color-text-muted);
 }
-.back {
-  margin-top: var(--space-8);
+
+.watch {
+  max-width: var(--container-narrow);
+  margin: var(--space-8) auto 0;
+  text-align: center;
+}
+.watch p:not(.eyebrow) {
+  color: var(--color-text-muted);
+}
+
+.closing {
+  text-align: center;
+  padding: var(--space-10) 0 0;
+}
+.closing h2 {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-5);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius);
+  font-weight: 600;
+  text-decoration: none;
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  transition: background var(--transition);
+}
+.btn:hover {
+  background: var(--color-accent-hover);
 }
 </style>

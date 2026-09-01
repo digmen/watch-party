@@ -10,22 +10,10 @@ Anything already shipped is in [CHANGELOG.md](CHANGELOG.md).
 These are not "someday" items — each one is something that looks finished from the outside and
 is not.
 
-- [ ] **`VITE_PUBLIC_ORIGIN` cannot actually be set.** `apps/frontend/src/seo.ts` reads it, and
-      canonical / `og:url` / sitemap URLs stay off until it has a value — but the frontend is
-      built inside Docker and `apps/frontend/Dockerfile` declares no `ARG`/`ENV` for it, and
-      `infra/docker-compose.prod.yml` passes no `build.args`. So the switch exists and nothing
-      can flip it. Needs: `ARG VITE_PUBLIC_ORIGIN` + `ENV` in the build stage, `build.args` in
-      the prod compose file, and the key added to `ImportMetaEnv` in
-      `apps/frontend/src/vite-env.d.ts`.
 - [ ] **`og:image` points at an SVG.** `apps/frontend/public/og-image.svg` is referenced from
       `index.html` and `seo.ts`, but Telegram, Slack, X and Facebook do not render SVG for link
       previews — they show nothing. Needs a 1200×630 PNG. Playwright is already a dev dependency,
       so rendering an HTML template to PNG and committing the result is the cheap path.
-- [ ] **The video cache is never evicted.** `VIDEO_CACHE_TTL_HOURS` is parsed in
-      `apps/backend/src/config/env.schema.ts` and used nowhere; `lastAccessedAt` is written in
-      `video.service.ts` and read by nobody. The cache volume grows without bound until the disk
-      fills. `ScheduleModule` is already wired — copy the Redis `NX`-lock pattern from
-      `modules/guest/guest-cleanup.service.ts` so replicas don't race each other.
 
 ## Known gaps
 
@@ -56,8 +44,10 @@ Deliberate trade-offs. Documented so the reasoning survives, not because they're
 
 ## Nice to have
 
-- [ ] Named Cloudflare tunnel + a real domain. This also switches SEO on (see the first blocking
-      item) and makes room links stable across restarts.
+- [ ] **Paid ad-free plan.** The product is free with ads between sessions; a paid plan removes
+      the ads and changes nothing else — no feature gating beyond that. Needs a subscription/
+      payment system, not built yet. No ads system exists yet either, so this is genuinely two
+      pieces of unbuilt infrastructure, not one.
 - [ ] Observability: Prometheus metrics + Grafana. Right now the only signal is container logs.
 - [ ] Brotli precompression alongside gzip — needs `ngx_brotli`, absent from stock nginx.
 - [ ] Prerendering the landing page for crawlers that don't execute JavaScript. Static meta and
