@@ -45,12 +45,21 @@ and container-service-name hosts before any request is made; the attack vectors 
 tests in `packages/shared/src/schemas/schemas.test.ts`. Adding a video also requires membership in
 the room.
 
-### Known residual risk: playback is authorized per asset, not per room
+### Fixed 2026-09-05: playback is now authorized per room, not just per asset
 
-Cached streams are addressed by asset UUID, and any authenticated user who knows one can fetch it
-regardless of which room they are in. Checking room membership on every segment would mean a
-database round trip per segment; the intended fix is a signed, short-TTL playback token. Until
-that lands, treat cached content as visible to anyone who obtains an asset ID.
+Was: cached streams are addressed by asset UUID, and any authenticated user who knew one could
+fetch it regardless of which room they were in. Fixed by checking room membership on every asset-
+status, playlist, and segment request (`VideoProxyController.assertAssetAccessible` — a video can
+legitimately sit in more than one room, since identical source URLs dedup to the same asset row,
+so the check is "member of *any* room that has this asset attached", not "member of one owning
+room").
+
+This was sketched above as needing a signed short-TTL token instead, to avoid a DB round trip per
+segment. Went with the plain membership check instead: it revokes access the instant someone
+leaves a room (a token keeps working until it expires), and at current traffic (~0 concurrent
+viewers, see the 2026-09-05 usage audit) the extra indexed query per segment costs nothing real.
+Revisit with a signed-token/short-cache layer if segment request volume ever makes that query show
+up in profiling — not before.
 
 ### Guest accounts
 

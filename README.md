@@ -137,10 +137,9 @@ Full list with reasoning in [TODO.md](TODO.md). The ones most likely to bite you
 - Arbitrary web pages aren't supported. Direct media URLs work, and ok.ru/VK go through `yt-dlp`;
   a general film-hosting page is classified `needs_extraction` and reported as a clear error
   rather than scraped.
-- **The video cache is never evicted** — `VIDEO_CACHE_TTL_HOURS` is read from the environment and
-  currently enforced by nothing, so the cache volume grows until the disk does.
-- **Playback is authorized per asset, not per room**: knowing an asset UUID is enough to pull that
-  stream from another room. See [SECURITY.md](SECURITY.md).
+- ~~The video cache is never evicted~~ — **fixed** (`VideoCacheCleanupService`, hourly cron, evicts
+  assets unused longer than `VIDEO_CACHE_TTL_HOURS`).
+- ~~Playback is authorized per asset, not per room~~ — **fixed 2026-09-05**, see [SECURITY.md](SECURITY.md).
 - `trustProxy` is off, so the HTTP rate limiter sees every request as coming from one IP (the
   tunnel). Guest creation compensates with a per-room counter in Redis; nothing else does.
 

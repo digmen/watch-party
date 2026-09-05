@@ -95,6 +95,11 @@ could never be replaced, and a container restart could strand a video in `proces
   `curl` right after `docker compose up`, which sometimes ran before nginx inside the container
   was ready to accept connections — caught live when a fully working deploy still turned CI red.
   Frontend now retries on the same schedule as backend.
+- **2026-09-05 — `og:image`/`twitter:image` now point at a real PNG, not an SVG.** Telegram,
+  Slack, X and Facebook don't rasterize SVG for link previews — they showed nothing. The SVG
+  (`apps/frontend/public/og-image.svg`) stays as the editable source; a 1200×630 PNG rendered
+  from it (`sharp`, one-off — not a runtime dependency) is what `index.html`/`seo.ts` reference
+  now, plus `og:image:type`/`width`/`height` so crawlers don't have to probe the file to size it.
 
 ### Security
 
@@ -115,6 +120,14 @@ could never be replaced, and a container restart could strand a video in `proces
 - **Guest creation is rate-limited per room** in Redis, independently of the IP throttler — behind
   `cloudflared` → Traefik every request shares one source IP, so per-IP limiting cannot
   distinguish callers at all.
+- **2026-09-05 — playback is now authorized per room, not just per asset.** `getStatus`,
+  `getPlaylist` and `getSegment` used to accept any valid JWT; now each checks that the caller
+  belongs to at least one room the asset is currently attached to (an asset can legitimately sit
+  in more than one room, since identical source URLs dedup to the same row). Went with a plain
+  membership check on every request rather than the signed short-TTL token this was sketched as
+  needing (see old TODO/SECURITY.md entries) — it revokes access the instant someone leaves a
+  room, and at current traffic the extra indexed query costs nothing real; revisit if segment
+  volume ever makes it show up in profiling.
 
 ### Changed
 

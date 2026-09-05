@@ -32,6 +32,19 @@ export class VideoProxyController {
     if (!(await this.rooms.isMember(roomId, userId))) throw new ForbiddenException("Not a member of this room");
   }
 
+  // Fixes the known-limitation from README: getStatus/getPlaylist/getSegment used to check only
+  // "is this a valid JWT", not "is this asset one of the caller's rooms" — so anyone who learned
+  // or guessed an asset UUID (36 chars, but leaked via e.g. a shared screenshot, a referrer header,
+  // browser history, or just handed room to room since assets are deduped by sourceUrlHash) could
+  // stream it forever. An asset can legitimately sit in more than one room (same source URL added
+  // twice = same row, see addVideoToRoom's dedup), so membership is "is the caller in ANY room that
+  // currently has this asset attached", not "is there one owning room".
+  private async assertAssetAccessible(assetId: string, userId: string): Promise<void> {
+    const roomIds = await this.videos.roomIdsForAsset(assetId);
+    const memberships = await Promise.all(roomIds.map((roomId) => this.rooms.isMember(roomId, userId)));
+    if (!memberships.some(Boolean)) throw new ForbiddenException("Not a member of any room with this video");
+  }
+
   // Guests watch what the host picked; they don't get to point the server at new URLs. This also
   // keeps the fetch-a-user-supplied-URL surface behind a real account.
   @Post("rooms/:roomId/videos")
@@ -53,14 +66,16 @@ export class VideoProxyController {
   }
 
   @Get("video/assets/:id")
-  async getStatus(@Param("id") id: string) {
+  async getStatus(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser) {
+    await this.assertAssetAccessible(id, user.sub);
     const asset = await this.videos.getAsset(id);
     return { video: toVideoAssetDto(asset) };
   }
 
   @Throttle({ default: { limit: 300, ttl: 60_000 } })
   @Get("video/proxy/:id/playlist.m3u8")
-  async getPlaylist(@Param("id") id: string, @Res() reply: FastifyReply) {
+  async getPlaylist(@Param("id") id: string, @CurrentUser() user: AuthenticatedUser, @Res() reply: FastifyReply) {
+    await this.assertAssetAccessible(id, user.sub);
     const asset = await this.videos.getAsset(id);
     await this.videos.touchLastAccessed(id);
     const text = await this.cache.readPlaylist(asset.sourceUrlHash);
@@ -77,7 +92,18 @@ export class VideoProxyController {
   // so that exact literal path still wins over this param route for the manifest itself.
   @Throttle({ default: { limit: 300, ttl: 60_000 } })
   @Get("video/proxy/:id/:token")
-  async getSegment(@Param("id") id: string, @Param("token") token: string, @Res() reply: FastifyReply) {
+  async getSegment(
+    @Param("id") id: string,
+    @Param("token") token: string,
+    @CurrentUser() user: AuthenticatedUser,
+    @Res() reply: FastifyReply,
+  ) {
+    // Checked per segment, not once per playlist fetch: hls.js keeps pulling segments for as long
+    // as it holds a playlist that was already resolved, and a captured segment URL (devtools
+    // network tab, screen-share, a proxy log) must stop working the moment membership does, not
+    // linger until the next playlist reload. The extra query is one indexed lookup — real cost
+    // only if this endpoint ever gets busy, which it doesn't yet (see 2026-09-05 usage audit).
+    await this.assertAssetAccessible(id, user.sub);
     const asset = await this.videos.getAsset(id);
     await this.videos.touchLastAccessed(id);
 

@@ -10,19 +10,12 @@ Anything already shipped is in [CHANGELOG.md](CHANGELOG.md).
 These are not "someday" items — each one is something that looks finished from the outside and
 is not.
 
-- [ ] **`og:image` points at an SVG.** `apps/frontend/public/og-image.svg` is referenced from
-      `index.html` and `seo.ts`, but Telegram, Slack, X and Facebook do not render SVG for link
-      previews — they show nothing. Needs a 1200×630 PNG. Playwright is already a dev dependency,
-      so rendering an HTML template to PNG and committing the result is the cheap path.
+Both items previously listed here are done — see [CHANGELOG.md](CHANGELOG.md) (2026-09-05).
+Nothing currently blocking.
 
 ## Known gaps
 
 Deliberate trade-offs. Documented so the reasoning survives, not because they're fine forever.
-
-- [ ] **Playback is authorized per asset, not per room.** A member of *any* room who knows an
-      asset UUID can pull that stream. The honest fix is a signed short-TTL playback token;
-      checking membership on every segment would be a database round trip per segment, which is
-      not worth it. See [SECURITY.md](SECURITY.md).
 - [ ] **`trustProxy` is off**, so `@nestjs/throttler` sees one source IP behind
       `cloudflared` → Traefik and rate-limits everyone as a single caller. Guest creation works
       around this with a per-room Redis counter; nothing else does.
