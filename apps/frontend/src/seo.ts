@@ -43,11 +43,11 @@ export function usePageSeo({ title, description, path, noindex }: PageSeo): void
     ogSiteName: SITE_NAME,
     ogLocale: "ru_RU",
     ogUrl: url,
-    ogImage: absoluteUrl("/og-image.svg"),
+    ogImage: absoluteUrl("/og-image.png"),
     twitterCard: "summary_large_image",
     twitterTitle: title,
     twitterDescription: description,
-    twitterImage: absoluteUrl("/og-image.svg"),
+    twitterImage: absoluteUrl("/og-image.png"),
     robots: noindex ? "noindex, nofollow" : "index, follow",
   });
 }
