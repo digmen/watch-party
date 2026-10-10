@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -141,6 +141,19 @@ export class VideoCacheService {
 
   // Best-effort: если каталог уже снесён руками/не создавался (ассет упал на "failed" до
   // первого сегмента) — это не ошибка эвикции, а норма.
+  // Total size of one asset's cache directory (recursive); 0 when it does not exist.
+  async dirSizeBytes(assetHash: string): Promise<number> {
+    let total = 0;
+    try {
+      for (const name of await readdir(this.dirFor(assetHash))) {
+        total += (await stat(path.join(this.dirFor(assetHash), name)).catch(() => null))?.size ?? 0;
+      }
+    } catch {
+      return 0;
+    }
+    return total;
+  }
+
   async evictDir(assetHash: string): Promise<void> {
     await rm(this.dirFor(assetHash), { recursive: true, force: true });
   }

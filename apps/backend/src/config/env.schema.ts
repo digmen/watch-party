@@ -19,6 +19,8 @@ export const EnvSchema = z.object({
 
   VIDEO_CACHE_PATH: z.string().default("/data/video-cache"),
   VIDEO_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(24),
+  // Hard ceiling for the whole cache: a 2-hour film is 3-5 GB, and the disk is shared with other things.
+  VIDEO_CACHE_MAX_GB: z.coerce.number().positive().default(15),
   MAX_CONCURRENT_STREAMS: z.coerce.number().int().positive().default(8),
 
   // A room link is a bearer credential, so guest creation needs a ceiling that doesn't depend on
