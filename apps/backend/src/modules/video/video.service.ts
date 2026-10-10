@@ -8,6 +8,7 @@ import { RoomGateway } from "../gateway/room.gateway";
 import { toVideoAssetDto } from "./video.presenter";
 import { hashUrl } from "./video-cache.service";
 import type { PrefetchJobData } from "./video-prefetch.processor";
+import { READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import { VideoResolverService } from "./video-resolver.service";
 
 const NEEDS_EXTRACTION_MESSAGE =
@@ -22,6 +23,7 @@ export class VideoService implements OnModuleInit {
   constructor(
     @Inject(DRIZZLE_CLIENT) private readonly db: DrizzleDb,
     private readonly resolver: VideoResolverService,
+    private readonly cache: VideoCacheService,
     private readonly gateway: RoomGateway,
     @InjectQueue("video-prefetch") private readonly queue: Queue<PrefetchJobData>,
   ) {}
@@ -32,6 +34,14 @@ export class VideoService implements OnModuleInit {
   // and the UI hides the input while processing. Reconciling at boot is what makes that
   // self-healing instead of permanent.
   async onModuleInit(): Promise<void> {
+    // Playable-while-downloading videos: if the download died with the process, close the playlist
+    // so the video ends where it was cut instead of waiting forever for segments that never come.
+    const playable = await this.db.select().from(videoAssets).where(eq(videoAssets.status, "ready"));
+    for (const asset of playable) {
+      if (await this.queue.getJob(asset.sourceUrlHash)) continue;
+      await this.cache.closePlaylist(asset.sourceUrlHash);
+    }
+
     const unfinished = await this.db
       .select()
       .from(videoAssets)
@@ -43,7 +53,17 @@ export class VideoService implements OnModuleInit {
       const job = await this.queue.getJob(asset.sourceUrlHash);
       // A job that still exists is either waiting or genuinely running under another replica —
       // leave those alone; only rows with no job behind them are stranded.
-      if (!job) orphaned.push(asset.id);
+      if (job) continue;
+      // Enough segments already on disk means it was playable before the restart: keep it.
+      if ((await this.cache.countSegmentsInPlaylist(asset.sourceUrlHash)) >= READY_AFTER_SEGMENTS) {
+        await this.cache.closePlaylist(asset.sourceUrlHash);
+        await this.db
+          .update(videoAssets)
+          .set({ status: "ready", storagePath: this.cache.dirFor(asset.sourceUrlHash) })
+          .where(eq(videoAssets.id, asset.id));
+        continue;
+      }
+      orphaned.push(asset.id);
     }
     if (orphaned.length === 0) return;
 

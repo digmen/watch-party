@@ -16,6 +16,9 @@ export function hashUrl(url: string): string {
   return createHash("sha256").update(url).digest("hex").slice(0, 32);
 }
 
+// How many 6-second segments must exist before a video counts as playable (~18 s).
+export const READY_AFTER_SEGMENTS = 3;
+
 @Injectable()
 export class VideoCacheService {
   private readonly logger = new Logger(VideoCacheService.name);

@@ -6,6 +6,8 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- A download interrupted by a restart no longer removes a video people are watching: once it has enough segments the asset stays `ready` with a closed playlist (it simply ends earlier). Verified by killing the backend and ffmpeg mid-download.
+
 - Fix: play/pause/seek events are stamped with the server clock instead of the sender's own. With a client clock off by N seconds the whole room froze at the start for N seconds (reproduced on production, verified fixed with clocks skewed by +150 s / -90 s).
 
 - Playback starts while the video is still downloading (HLS event playlist, "ready" after ~18 s of video) instead of after the whole file; failed-midway downloads end cleanly. Up to 3 videos are processed at once.

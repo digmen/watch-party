@@ -6,7 +6,7 @@ import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
 import { roomVideos, videoAssets } from "../../database/schema";
 import { RoomGateway } from "../gateway/room.gateway";
 import { toVideoAssetDto } from "./video.presenter";
-import { VideoCacheService } from "./video-cache.service";
+import { READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import { VideoResolverService } from "./video-resolver.service";
 
 export interface PrefetchJobData {
@@ -20,9 +20,6 @@ export interface PrefetchJobData {
 // on a slow origin legitimately takes many minutes — but "no timeout at all" means one stalled
 // TCP read holds the single concurrency slot forever and every later video queues behind it.
 const REMUX_TIMEOUT_MS = 30 * 60_000;
-
-// How many 6-second segments must exist before the room is told "playable" (~18s of video).
-const READY_AFTER_SEGMENTS = 3;
 
 // Three at once: a long film keeps its slot for the whole download (playback starts early, the job
 // does not end early), and with a single slot one big video would block everyone else's.
@@ -68,6 +65,17 @@ export class VideoPrefetchProcessor extends WorkerHost {
   async onFailed(job: Job<PrefetchJobData> | undefined, err: Error) {
     if (!job?.data?.assetId) return;
     this.logger.error(`job for asset ${job.data.assetId} failed: ${err.message}`);
+
+    // A download cut short by a redeploy or crash must not take away a video people are already
+    // watching: if enough segments exist to play, keep them and close the playlist, so the video
+    // simply ends earlier than the original instead of vanishing from the room mid-film.
+    const segments = await this.cache.countSegmentsInPlaylist(job.data.assetHash);
+    if (segments >= READY_AFTER_SEGMENTS) {
+      await this.cache.closePlaylist(job.data.assetHash);
+      await this.markReady(job.data.assetId, this.cache.dirFor(job.data.assetHash));
+      this.logger.warn(`asset ${job.data.assetId} kept with ${segments} segments after interrupted download`);
+      return;
+    }
     await this.markFailed(job.data.assetId, err.message);
   }
 
