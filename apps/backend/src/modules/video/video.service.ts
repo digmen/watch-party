@@ -6,9 +6,8 @@ import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
 import { roomVideos, type VideoAsset, videoAssets } from "../../database/schema";
 import { RoomGateway } from "../gateway/room.gateway";
 import { toVideoAssetDto } from "./video.presenter";
-import { hashUrl } from "./video-cache.service";
+import { hashUrl, READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import type { PrefetchJobData } from "./video-prefetch.processor";
-import { READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import { VideoResolverService } from "./video-resolver.service";
 
 const NEEDS_EXTRACTION_MESSAGE =
