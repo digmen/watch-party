@@ -21,7 +21,7 @@ EMPTY=$(printf '' | sha256sum | cut -d' ' -f1)
 
 KEY=${1:-}
 if [ -z "$KEY" ]; then
-  KEY=$(sigv4 -H "x-amz-content-sha256: $EMPTY" "$R2_ENDPOINT/$R2_BUCKET?list-type=2&prefix=db/" \
+  KEY=$(sigv4 -H "x-amz-content-sha256: $EMPTY" "$R2_ENDPOINT/$R2_BUCKET?list-type=2&prefix=${BACKUP_PREFIX:-db}/" \
     | grep -o '<Key>[^<]*</Key>' | sed 's/<[^>]*>//g' | sort | tail -1)
 fi
 [ -n "$KEY" ] || { echo "в бакете нет дампов" >&2; exit 1; }

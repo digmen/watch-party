@@ -21,7 +21,8 @@ PG_DB=${PG_DB:-watchparty}
 
 TS=$(date -u +%Y%m%d-%H%M%S)
 FILE="$DIR/db-$TS.sql.gz"
-KEY="db/db-$TS.sql.gz"
+# Одна корзина на несколько серверов: у каждого свой префикс (BACKUP_PREFIX в файле ключей).
+KEY="${BACKUP_PREFIX:-db}/db-$TS.sql.gz"
 mkdir -p "$DIR"
 
 docker exec "$PG_CONTAINER" pg_dump -U "$PG_USER" -d "$PG_DB" | gzip > "$FILE"
