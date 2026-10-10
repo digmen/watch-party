@@ -14,9 +14,6 @@ export const ChatMessageSchema = z.object({
   displayName: z.string(),
   body: z.string(),
   createdAt: z.string().datetime(),
-  replyTo: z
-    .object({ id: z.string().uuid(), displayName: z.string(), snippet: z.string() })
-    .nullable()
-    .default(null),
+  replyTo: z.object({ id: z.string().uuid(), displayName: z.string(), snippet: z.string() }).nullable().default(null),
 });
 export type ChatMessageDto = z.infer<typeof ChatMessageSchema>;

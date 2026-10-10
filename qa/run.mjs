@@ -248,7 +248,7 @@ const SCENARIOS = {
     const b = await launch();
     try {
       const host = await newViewer(b);
-      const url = await createRoomAsHost(host.page);
+      await createRoomAsHost(host.page);
       await addVideo(host.page);
       await host.page.click(t("play-toggle"));
       await sleep(12000);
