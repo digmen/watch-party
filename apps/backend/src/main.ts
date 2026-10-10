@@ -1,3 +1,4 @@
+import { RequestMethod } from "@nestjs/common";
 import "reflect-metadata";
 import fastifyCookie from "@fastify/cookie";
 import fastifyCors from "@fastify/cors";
@@ -32,7 +33,9 @@ async function bootstrap() {
   // of the page. The two routes registered directly on the raw Fastify instance below
   // (`/auth/csrf-token`, and `/auth/google` via the oauth2 plugin) intentionally stay outside this
   // prefix — they bypass Nest's router entirely, so setGlobalPrefix can't reach them anyway.
-  app.setGlobalPrefix("api");
+  // `auth/google/callback` is excluded because that exact path is what is registered as the
+  // authorised redirect URI in the Google Cloud OAuth client — it must not move under /api.
+  app.setGlobalPrefix("api", { exclude: [{ path: "auth/google/callback", method: RequestMethod.GET }] });
 
   await app.register(fastifyHelmet as any);
   await app.register(fastifyCors as any, {

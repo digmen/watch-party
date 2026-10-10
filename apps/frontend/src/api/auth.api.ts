@@ -1,4 +1,4 @@
-import type { GuestJoinDto, LoginDto, RegisterDto, RoomDto, UserDto } from "@watch-party/shared";
+import type { GuestJoinDto, GuestStartDto, LoginDto, RegisterDto, RoomDto, UserDto } from "@watch-party/shared";
 import { apiFetch } from "./client";
 
 interface UserResponse {
@@ -14,4 +14,7 @@ export const authApi = {
   // couldn't fetch the room itself beforehand.
   joinAsGuest: (dto: GuestJoinDto) =>
     apiFetch<{ user: UserDto; room: RoomDto }>("/auth/guest", { method: "POST", body: dto }),
+  // Guest hosts a brand-new room — no account, no room id yet.
+  startAsGuest: (dto: GuestStartDto) =>
+    apiFetch<{ user: UserDto; room: RoomDto }>("/auth/guest/start", { method: "POST", body: dto }),
 };

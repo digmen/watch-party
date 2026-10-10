@@ -7,7 +7,7 @@ import { setAuthCookies } from "../auth/cookie.util";
 import { toRoomDto } from "../rooms/room.presenter";
 import { RoomsService } from "../rooms/rooms.service";
 import { toUserDto } from "../users/user.presenter";
-import { GuestJoinDto } from "./dto/guest.dto";
+import { GuestJoinDto, GuestStartDto } from "./dto/guest.dto";
 import { GuestService } from "./guest.service";
 
 // Shares the "auth" prefix with AuthController — legal in Nest since the full paths differ, and it
@@ -45,6 +45,23 @@ export class GuestController {
 
     // The room comes back with the user so the client can render immediately — it can't fetch the
     // room itself until membership exists, which is only true once this call returns.
+    const members = await this.rooms.listMembers(session.room.id);
+    return { user: toUserDto(session.user), room: toRoomDto(session.room, members) };
+  }
+
+  // Creates a room and a guest host in one go — the no-signup entry point from the landing page.
+  @Post("guest/start")
+  @HttpCode(HttpStatus.OK)
+  async start(
+    @Body() dto: GuestStartDto,
+    @Req() request: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const session = await this.guests.startRoom(dto.displayName, dto.roomName, request.cookies?.access_token);
+    if (session.tokens) {
+      const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
+      setAuthCookies(reply, session.tokens, isProduction);
+    }
     const members = await this.rooms.listMembers(session.room.id);
     return { user: toUserDto(session.user), room: toRoomDto(session.room, members) };
   }

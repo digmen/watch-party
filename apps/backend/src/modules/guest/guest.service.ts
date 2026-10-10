@@ -13,7 +13,7 @@ import { and, eq } from "drizzle-orm";
 import type Redis from "ioredis";
 import type { Env } from "../../config/env.schema";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
-import { type Room, roomMembers, type User, users } from "../../database/schema";
+import { type Room, roomMembers, rooms, type User, users } from "../../database/schema";
 import { REDIS_CLIENT } from "../../redis/redis.module";
 import { AuthService, type TokenPair } from "../auth/auth.service";
 import { RoomsService } from "../rooms/rooms.service";
@@ -22,6 +22,7 @@ import { UsersService } from "../users/users.service";
 // Per-room burst ceiling, independent of the HTTP throttler: behind cloudflared -> Traefik every
 // request shares one source IP, so the IP-based limiter can't distinguish callers at all.
 const GUEST_BURST_PER_MINUTE = 10;
+const GUEST_START_PER_MINUTE = 30;
 
 export interface GuestSession {
   user: User;
@@ -68,6 +69,76 @@ export class GuestService {
 
     this.logger.log(`guest ${user.id} (${displayName}) joined room ${roomId}`);
     return { user, room, tokens: await this.auth.issueTokenPair(user) };
+  }
+
+  // "Just start watching": a guest who hosts. Creates the guest, the room they own and the
+  // membership in one transaction, so there is never a guest without a room or a room without an
+  // owner. Reloading the page must not mint a second room — an existing guest session whose room
+  // is still active is returned as-is.
+  async startRoom(
+    displayName: string,
+    roomName: string | undefined,
+    existingAccessToken?: string,
+  ): Promise<GuestSession> {
+    const existing = await this.findLiveSessionUser(existingAccessToken);
+    if (existing?.isGuest && existing.guestRoomId) {
+      const room = await this.rooms.findById(existing.guestRoomId).catch(() => null);
+      if (room?.isActive && room.ownerId === existing.id) return { user: existing, room, tokens: null };
+    }
+    if (existing && !existing.isGuest) {
+      // A real account asked for a quick room: give them one under their own account.
+      const room = await this.rooms.create(existing.id, roomName ?? `Комната ${existing.displayName}`);
+      return { user: existing, room, tokens: null };
+    }
+
+    await this.assertStartAllowed();
+
+    const { user, room } = await this.db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(users)
+        .values({ email: null, passwordHash: null, displayName, isGuest: true })
+        .returning();
+      const [createdRoom] = await tx
+        .insert(rooms)
+        .values({ name: roomName ?? `Комната ${displayName}`, ownerId: created.id })
+        .returning();
+      await tx.insert(roomMembers).values({ roomId: createdRoom.id, userId: created.id, role: "owner" });
+      const [scoped] = await tx
+        .update(users)
+        .set({ guestRoomId: createdRoom.id })
+        .where(eq(users.id, created.id))
+        .returning();
+      return { user: scoped, room: createdRoom };
+    });
+
+    this.logger.log(`guest ${user.id} (${displayName}) started room ${room.id}`);
+    return { user, room, tokens: await this.auth.issueTokenPair(user) };
+  }
+
+  private async findLiveSessionUser(accessToken?: string): Promise<User | undefined> {
+    if (!accessToken) return undefined;
+    try {
+      const { sub } = await this.jwt.verifyAsync<{ sub: string }>(accessToken, {
+        secret: this.config.get("JWT_ACCESS_SECRET", { infer: true }),
+      });
+      return (await this.users.findById(sub)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Global ceiling, not per-IP: behind Caddy/Cloudflare every caller shares one source address, so
+  // an IP throttler can't tell them apart (same reason the per-room counter exists).
+  private async assertStartAllowed(): Promise<void> {
+    const key = "guest:start:global";
+    const count = await this.redis.incr(key);
+    if (count === 1) await this.redis.expire(key, 60);
+    if (count > GUEST_START_PER_MINUTE) {
+      throw new HttpException(
+        "Сейчас слишком много новых комнат — попробуйте через минуту",
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
   }
 
   // Someone reloading the page or re-submitting the form shouldn't mint a second guest row — and

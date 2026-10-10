@@ -66,6 +66,20 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
+    // Creates the guest and their room in one call; returns the room id to navigate to.
+    async startAsGuest(displayName: string, roomName?: string): Promise<string> {
+      this.error = null;
+      try {
+        const { user, room } = await authApi.startAsGuest({ displayName, roomName });
+        this.user = user;
+        this.status = "ready";
+        return room.id;
+      } catch (err) {
+        this.error = err instanceof ApiError ? err.message : "Не удалось создать комнату";
+        throw err;
+      }
+    },
+
     async logout() {
       await authApi.logout();
       this.user = null;

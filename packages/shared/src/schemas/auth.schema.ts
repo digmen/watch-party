@@ -36,3 +36,11 @@ export const GuestJoinSchema = z.object({
     .regex(/^[^\p{Cc}\p{Cf}]+$/u, "Имя содержит недопустимые символы"),
 });
 export type GuestJoinDto = z.infer<typeof GuestJoinSchema>;
+
+// A guest who starts their own room: no roomId yet (it is created by this call), and the room name
+// is optional so the one-field "just start watching" flow works.
+export const GuestStartSchema = z.object({
+  displayName: GuestJoinSchema.shape.displayName,
+  roomName: z.string().trim().min(1).max(80).optional(),
+});
+export type GuestStartDto = z.infer<typeof GuestStartSchema>;

@@ -107,6 +107,6 @@ export class AuthController {
     setAuthCookies(reply, tokens, this.isProduction);
 
     const frontendOrigin = this.config.get("FRONTEND_ORIGIN", { infer: true });
-    reply.redirect(frontendOrigin);
+    reply.redirect(`${frontendOrigin}/rooms`);
   }
 }

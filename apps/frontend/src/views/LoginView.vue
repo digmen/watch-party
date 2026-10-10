@@ -37,7 +37,7 @@ function continueWithGoogle() {
 <template>
   <main class="login">
     <h1>{{ mode === "login" ? "С возвращением" : "Создать аккаунт" }}</h1>
-    <p class="lede">Аккаунт нужен, чтобы создавать комнаты. Чтобы присоединиться к другу — нет.</p>
+    <p class="lede">Аккаунт нужен только чтобы сохранять комнаты. Посмотреть с другом можно и без него — <RouterLink to="/">начать как гость</RouterLink>.</p>
 
     <form class="card" @submit.prevent="submit">
       <label>

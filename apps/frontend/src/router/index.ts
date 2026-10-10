@@ -4,6 +4,7 @@ import { useAuthStore } from "../stores/auth.store";
 import AboutView from "../views/AboutView.vue";
 import LandingView from "../views/LandingView.vue";
 import LoginView from "../views/LoginView.vue";
+import NotFoundView from "../views/NotFoundView.vue";
 import RoomCreateView from "../views/RoomCreateView.vue";
 import RoomListView from "../views/RoomListView.vue";
 import RoomPlayerView from "../views/RoomPlayerView.vue";
@@ -26,6 +27,7 @@ const router = createRouter({
     // view itself gates behind the guest name prompt until a session exists. Requiring auth here
     // is what used to bounce invited friends to a login form they had no account for.
     { path: "/rooms/:id", name: "room-player", component: RoomPlayerView },
+    { path: "/:pathMatch(.*)*", name: "not-found", component: NotFoundView },
   ],
 });
 
