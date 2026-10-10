@@ -135,7 +135,15 @@ export class VideoPrefetchProcessor extends WorkerHost {
       return;
     }
 
-    await this.remuxDirectMp4(assetId, assetHash, playbackUrl, headers, resolved.audioUrl, resolved.isLive === true);
+    await this.remuxDirectMp4(
+      assetId,
+      assetHash,
+      playbackUrl,
+      headers,
+      resolved.audioUrl,
+      resolved.isLive === true,
+      sourceUrl,
+    );
   }
 
   private async prepareManifestPassthrough(
@@ -161,6 +169,7 @@ export class VideoPrefetchProcessor extends WorkerHost {
     headers: Record<string, string>,
     audioUrl?: string,
     isLive = false,
+    pageUrl?: string,
   ): Promise<void> {
     this.logger.log(`remuxing asset ${assetId} (${sourceUrl})`);
     const cacheDir = await this.cache.ensureDir(assetHash);
@@ -192,74 +201,149 @@ export class VideoPrefetchProcessor extends WorkerHost {
       url,
     ];
 
-    const proc = Bun.spawn(
-      [
-        "ffmpeg",
-        "-y",
-        ...input(sourceUrl),
-        ...(audioUrl ? [...input(audioUrl), "-map", "0:v:0", "-map", "1:a:0"] : []),
-        "-c",
-        "copy",
-        "-start_number",
-        "0",
-        "-hls_time",
-        "6",
-        "-hls_list_size",
-        "0",
-        "-hls_playlist_type",
-        "event",
-        "-hls_flags",
-        "temp_file",
-        "-hls_segment_filename",
-        `${cacheDir}/%03d.ts`,
-        `${cacheDir}/playlist.m3u8`,
-      ],
-      { stdout: "pipe", stderr: "pipe" },
-    );
+    const hlsArgs = [
+      "-c",
+      "copy",
+      "-start_number",
+      "0",
+      "-hls_time",
+      "6",
+      "-hls_list_size",
+      "0",
+      "-hls_playlist_type",
+      "event",
+      "-hls_flags",
+      "temp_file",
+      "-hls_segment_filename",
+      `${cacheDir}/%03d.ts`,
+      `${cacheDir}/playlist.m3u8`,
+    ];
 
-    let timedOut = false;
-    const timeout = setTimeout(
-      () => {
-        timedOut = true;
-        proc.kill();
-      },
-      isLive ? LIVE_CAPTURE_TIMEOUT_MS : REMUX_TIMEOUT_MS,
-    );
+    // Attempt 1: ffmpeg reads the stream URL itself (cheapest, works for most sources).
+    // Attempt 2 (platform links only): yt-dlp downloads and feeds ffmpeg through a pipe. Some CDNs —
+    // TikTok's, notably — answer 403 to anything but the extractor's own session cookies, which
+    // yt-dlp keeps to itself and never puts into the URL or headers it reports.
+    const attempts: Array<"direct" | "pipe"> =
+      pageUrl && this.resolver.isExtractorHost(pageUrl) ? ["direct", "pipe"] : ["direct"];
 
-    // Playback starts as soon as a few segments exist: a two-hour film takes many minutes to
-    // download in full, and nobody should stare at a spinner for that long. The playlist is an
-    // HLS "event" playlist — it keeps growing while ffmpeg works and gets its ENDLIST at the end.
     let announcedReady = false;
-    const readyWatcher = setInterval(async () => {
-      if (announcedReady) return;
-      const segments = await this.cache.countSegmentsInPlaylist(assetHash);
-      if (segments >= READY_AFTER_SEGMENTS) {
-        announcedReady = true;
-        await this.markReady(assetId, cacheDir).catch(() => {});
-        this.logger.log(`asset ${assetId} playable after ${segments} segments (download continues)`);
-      }
-    }, 1000);
+    let lastReason = "";
 
-    const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-    clearTimeout(timeout);
-    clearInterval(readyWatcher);
+    for (const mode of attempts) {
+      const spawned =
+        mode === "direct"
+          ? {
+              ffmpeg: Bun.spawn(
+                [
+                  "ffmpeg",
+                  "-y",
+                  ...input(sourceUrl),
+                  ...(audioUrl ? [...input(audioUrl), "-map", "0:v:0", "-map", "1:a:0"] : []),
+                  ...hlsArgs,
+                ],
+                { stdout: "pipe", stderr: "pipe" },
+              ),
+              downloader: undefined,
+            }
+          : this.spawnPipeline(pageUrl as string, hlsArgs);
 
-    if (exitCode !== 0) {
-      const reason = timedOut
-        ? `Источник отдаёт видео слишком медленно — обработка прервана по таймауту (${REMUX_TIMEOUT_MS / 60_000} мин).`
-        : stderrText.split("\n").slice(-10).join("\n");
-      this.logger.error(`ffmpeg failed for asset ${assetId} (exit ${exitCode}, timedOut=${timedOut}): ${reason}`);
-      if (announcedReady) {
-        // People are already watching: keep what was downloaded and close the playlist so the
-        // player ends cleanly instead of waiting forever for segments that will never come.
-        await this.cache.closePlaylist(assetHash);
+      const proc = spawned.ffmpeg;
+      let timedOut = false;
+      const timeout = setTimeout(
+        () => {
+          timedOut = true;
+          proc.kill();
+          spawned.downloader?.kill();
+        },
+        isLive ? LIVE_CAPTURE_TIMEOUT_MS : REMUX_TIMEOUT_MS,
+      );
+
+      // Playback starts as soon as a few segments exist: a two-hour film takes many minutes to
+      // download in full, and nobody should stare at a spinner for that long. The playlist is an
+      // HLS "event" playlist — it keeps growing while ffmpeg works and gets its ENDLIST at the end.
+      const readyWatcher = setInterval(async () => {
+        if (announcedReady) return;
+        const segments = await this.cache.countSegmentsInPlaylist(assetHash);
+        if (segments >= READY_AFTER_SEGMENTS) {
+          announcedReady = true;
+          await this.markReady(assetId, cacheDir).catch(() => {});
+          this.logger.log(`asset ${assetId} playable after ${segments} segments (download continues)`);
+        }
+      }, 1000);
+
+      const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
+      clearTimeout(timeout);
+      clearInterval(readyWatcher);
+      spawned.downloader?.kill();
+
+      if (exitCode === 0) {
+        if (!announcedReady) await this.markReady(assetId, cacheDir);
+        this.logger.log(`asset ${assetId} fully downloaded at ${cacheDir} (${mode})`);
         return;
       }
-      await this.markFailed(assetId, reason);
-      return;
+
+      lastReason = timedOut
+        ? `Источник отдаёт видео слишком медленно — обработка прервана по таймауту (${REMUX_TIMEOUT_MS / 3_600_000} ч).`
+        : humanizeFfmpegError(stderrText);
+      this.logger.error(
+        `ffmpeg (${mode}) failed for asset ${assetId} (exit ${exitCode}, timedOut=${timedOut}): ${stderrText.split("\n").slice(-4).join(" | ")}`,
+      );
+
+      if (announcedReady) break; // people are watching already — keep what we have, do not retry over it
+      if (timedOut) break;
     }
 
-    if (!announcedReady) await this.markReady(assetId, cacheDir);
-    this.logger.log(`asset ${assetId} fully downloaded at ${cacheDir}`);
+    if (announcedReady) {
+      // Keep what was downloaded and close the playlist so the player ends cleanly instead of
+      // waiting forever for segments that will never come.
+      await this.cache.closePlaylist(assetHash);
+      return;
+    }
+    await this.markFailed(assetId, lastReason);
   }
+
+  private spawnPipeline(pageUrl: string, hlsArgs: string[]) {
+    const downloader = Bun.spawn(
+      [
+        "yt-dlp",
+        "-f",
+        "b[height<=1080]/b",
+        "--no-playlist",
+        "--no-warnings",
+        // yt-dlp's own ffmpeg downloader carries the extractor's cookies and headers to the CDN, and
+        // MPEG-TS is a container that can be read from a pipe (an mp4 with its index at the end cannot).
+        "--downloader",
+        "ffmpeg",
+        "--downloader-args",
+        "ffmpeg_o:-c copy -f mpegts",
+        "-o",
+        "-",
+        pageUrl,
+      ],
+      { stdout: "pipe", stderr: "ignore" },
+    );
+    const ffmpeg = Bun.spawn(["ffmpeg", "-y", "-i", "pipe:0", ...hlsArgs], {
+      stdin: downloader.stdout,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return { ffmpeg, downloader };
+  }
+}
+
+// ffmpeg's stderr starts with a screenful of build info; the useful part is the last lines. The raw
+// text is not something to show a viewer, so the common causes get a plain sentence.
+function humanizeFfmpegError(stderr: string): string {
+  const lines = stderr
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const tail = lines.slice(-6).join(" ");
+  if (/HTTP error 4(01|03)|Server returned 4(01|03)/.test(tail))
+    return "Источник закрыл доступ к видео (ошибка 403). Попробуйте другую ссылку.";
+  if (/HTTP error 404|Server returned 404/.test(tail))
+    return "Видео по этой ссылке не найдено — возможно, оно удалено.";
+  if (/Invalid data found|moov atom not found/.test(tail))
+    return "Не удалось прочитать видео: файл повреждён или не полностью загружен.";
+  return `Не удалось обработать видео. ${lines.slice(-2).join(" ").slice(0, 300)}`;
 }
