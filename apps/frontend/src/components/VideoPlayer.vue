@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import Hls from "hls.js";
+import type Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
 
 const props = defineProps<{ src: string; wantPlaying: boolean }>();
@@ -8,12 +8,23 @@ const emit = defineEmits<{ toggle: []; stall: [stalled: boolean]; unsupported: [
 const videoEl = ref<HTMLVideoElement | null>(null);
 let hls: Hls | null = null;
 
-function attach(src: string) {
+// hls.js is ~500 KB; every page that only reads text must not pay for it.
+let HlsCtor: typeof Hls | null = null;
+let attachToken = 0;
+
+async function attach(src: string) {
   const el = videoEl.value;
   if (!el) return;
 
   hls?.destroy();
   hls = null;
+
+  // A second attach() (new video) can start while this one is still loading the library: only the
+  // latest may proceed.
+  const token = ++attachToken;
+  if (!HlsCtor) HlsCtor = (await import("hls.js")).default;
+  if (token !== attachToken || !videoEl.value) return;
+  const Hls = HlsCtor;
 
   if (Hls.isSupported()) {
     // The playlist can still be growing while people watch (the server starts serving the first

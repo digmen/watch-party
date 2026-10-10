@@ -196,3 +196,23 @@ button.quiet:hover:not(:disabled) {
     scroll-behavior: auto !important;
   }
 }
+
+/* Thin dark scrollbars instead of the bright system ones; scroll chaining stops at each panel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-faint);
+}

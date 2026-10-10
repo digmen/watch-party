@@ -2,6 +2,12 @@
   "name": "watch-party-qa",
   "private": true,
   "type": "module",
-  "scripts": { "qa": "node run.mjs" },
-  "dependencies": { "playwright-core": "^1.50.0" }
+  "scripts": {
+    "qa": "node run.mjs"
+  },
+  "dependencies": {
+    "lighthouse": "^12.8.2",
+    "playwright-core": "^1.50.0",
+    "puppeteer-core": "^25.13.0"
+  }
 }

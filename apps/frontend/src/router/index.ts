@@ -1,38 +1,35 @@
 import { createRouter, createWebHistory } from "vue-router";
 import { hasSessionHint } from "../api/client";
 import { useAuthStore } from "../stores/auth.store";
-import AboutView from "../views/AboutView.vue";
 import LandingView from "../views/LandingView.vue";
-import LegalView from "../views/LegalView.vue";
-import LoginView from "../views/LoginView.vue";
-import NotFoundView from "../views/NotFoundView.vue";
-import PublicRoomsView from "../views/PublicRoomsView.vue";
-import RoomCreateView from "../views/RoomCreateView.vue";
-import RoomListView from "../views/RoomListView.vue";
-import RoomPlayerView from "../views/RoomPlayerView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
   scrollBehavior: (_to, _from, saved) => saved ?? { top: 0 },
   routes: [
     { path: "/", name: "landing", component: LandingView },
-    { path: "/about", name: "about", component: AboutView },
-    { path: "/public", name: "public-rooms", component: PublicRoomsView },
-    { path: "/login", name: "login", component: LoginView },
-    { path: "/privacy", name: "privacy", component: LegalView },
-    { path: "/terms", name: "terms", component: LegalView },
-    { path: "/rooms", name: "rooms", component: RoomListView, meta: { requiresAuth: true } },
+    { path: "/about", name: "about", component: () => import("../views/AboutView.vue") },
+    { path: "/public", name: "public-rooms", component: () => import("../views/PublicRoomsView.vue") },
+    { path: "/login", name: "login", component: () => import("../views/LoginView.vue") },
+    { path: "/privacy", name: "privacy", component: () => import("../views/LegalView.vue") },
+    { path: "/terms", name: "terms", component: () => import("../views/LegalView.vue") },
+    {
+      path: "/rooms",
+      name: "rooms",
+      component: () => import("../views/RoomListView.vue"),
+      meta: { requiresAuth: true },
+    },
     {
       path: "/rooms/new",
       name: "room-create",
-      component: RoomCreateView,
+      component: () => import("../views/RoomCreateView.vue"),
       meta: { requiresAuth: true },
     },
     // Deliberately public at the router level: the room UUID is the invite credential, and the
     // view itself gates behind the guest name prompt until a session exists. Requiring auth here
     // is what used to bounce invited friends to a login form they had no account for.
-    { path: "/rooms/:id", name: "room-player", component: RoomPlayerView },
-    { path: "/:pathMatch(.*)*", name: "not-found", component: NotFoundView },
+    { path: "/rooms/:id", name: "room-player", component: () => import("../views/RoomPlayerView.vue") },
+    { path: "/:pathMatch(.*)*", name: "not-found", component: () => import("../views/NotFoundView.vue") },
   ],
 });
 

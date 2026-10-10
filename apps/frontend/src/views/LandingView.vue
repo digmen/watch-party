@@ -13,12 +13,15 @@ const auth = useAuthStore();
 const router = useRouter();
 
 const publicRooms = ref<PublicRoomDto[]>([]);
+const publicLoaded = ref(false);
 onMounted(async () => {
   if (auth.isGuest && auth.user) displayName.value = auth.user.displayName;
   try {
     publicRooms.value = (await roomsApi.publicList(10)).rooms;
   } catch {
     // The list is a bonus; the landing page works without it.
+  } finally {
+    publicLoaded.value = true;
   }
 });
 
@@ -155,12 +158,17 @@ function continueWithGoogle() {
       </div>
     </section>
 
-    <section v-if="publicRooms.length > 0" class="block live">
+    <section class="block live" aria-live="polite">
       <div class="live-head">
         <h2>Сейчас в публичных комнатах</h2>
         <RouterLink to="/public">Все комнаты →</RouterLink>
       </div>
-      <PublicRoomList :rooms="publicRooms" />
+      <!-- The section keeps one height in all three states, so the page does not jump when the list arrives. -->
+      <div class="live-body">
+        <PublicRoomList v-if="publicRooms.length > 0" :rooms="publicRooms" />
+        <p v-else-if="publicLoaded" class="live-empty">Пока нет публичных комнат — создайте первую и сделайте её открытой.</p>
+        <div v-else class="live-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>
+      </div>
     </section>
 
     <section id="how" class="block">
@@ -496,6 +504,32 @@ h1 {
 }
 .live-head a {
   font-size: var(--text-sm);
+}
+.live-body {
+  min-height: 7.5rem;
+}
+.live-empty {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  padding: var(--space-6) 0;
+  text-align: center;
+}
+.live-skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-4);
+}
+.live-skeleton span {
+  height: 7.5rem;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(90deg, var(--color-surface), var(--color-surface-raised), var(--color-surface));
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
 }
 .narrow {
   max-width: 40rem;

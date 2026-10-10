@@ -14,3 +14,4 @@ bun.lock.bak
 coverage/
 playwright-report/
 test-results/
+qa/reports/

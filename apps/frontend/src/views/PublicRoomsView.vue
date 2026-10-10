@@ -45,7 +45,7 @@ onMounted(() => load());
       <RouterLink class="create" to="/">Создать свою</RouterLink>
     </header>
 
-    <p v-if="loading" class="placeholder">Загрузка…</p>
+    <div v-if="loading" class="skeleton" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
     <p v-else-if="failed" class="error">Не удалось загрузить список. Обновите страницу.</p>
 
     <div v-else-if="rooms.length === 0" class="empty card">
@@ -106,6 +106,16 @@ h1 {
   align-items: center;
   gap: var(--space-3);
   color: var(--color-text-muted);
+}
+.skeleton {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-4);
+}
+.skeleton span {
+  height: 7.5rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
 }
 .more {
   margin-top: var(--space-6);
