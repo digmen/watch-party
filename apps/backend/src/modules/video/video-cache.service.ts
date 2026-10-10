@@ -99,7 +99,8 @@ export class VideoCacheService {
   async closePlaylist(assetHash: string): Promise<void> {
     try {
       const text = await readFile(this.playlistPath(assetHash), "utf-8");
-      if (!text.includes("#EXT-X-ENDLIST")) await writeFile(this.playlistPath(assetHash), `${text.trimEnd()}\n#EXT-X-ENDLIST\n`);
+      if (!text.includes("#EXT-X-ENDLIST"))
+        await writeFile(this.playlistPath(assetHash), `${text.trimEnd()}\n#EXT-X-ENDLIST\n`);
     } catch {
       // No playlist at all — nothing playable to close.
     }
