@@ -3,8 +3,10 @@
 User-agent: *
 Allow: /$
 Allow: /about
+Allow: /privacy
+Allow: /terms
 Disallow: /rooms
 Disallow: /login
 Disallow: /api/
 
-Sitemap: /sitemap.xml
+Sitemap: https://kerry.zone/sitemap.xml

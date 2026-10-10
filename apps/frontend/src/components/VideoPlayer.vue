@@ -56,7 +56,10 @@ defineExpose({ applyCorrection, setPlaying });
 <style scoped>
 .video {
   width: 100%;
-  max-height: 60vh;
+  max-height: 70vh;
+  aspect-ratio: 16 / 9;
   background: #000;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
 }
 </style>

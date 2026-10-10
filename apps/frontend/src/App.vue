@@ -38,7 +38,12 @@ async function logout() {
     <RouterView />
 
     <footer v-if="!isImmersive" class="site-foot">
-      <p>Watch Party — открытый пет-проект для совместного просмотра.</p>
+      <p class="links">
+        <RouterLink to="/about">О проекте</RouterLink>
+        <RouterLink to="/privacy">Конфиденциальность</RouterLink>
+        <RouterLink to="/terms">Условия</RouterLink>
+      </p>
+      <p>Watch Party — совместный просмотр видео для тех, кто далеко друг от друга.</p>
       <p class="legal">
         Сервис не хранит и не размещает видео: воспроизводится только та ссылка, которую указал
         пользователь.
@@ -97,6 +102,20 @@ nav a:hover {
   text-align: center;
   color: var(--color-text-faint);
   font-size: var(--text-sm);
+}
+.links {
+  display: flex;
+  gap: var(--space-5);
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.links a {
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+.links a:hover {
+  color: var(--color-text);
 }
 .legal {
   margin-top: var(--space-2);

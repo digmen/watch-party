@@ -1,10 +1,23 @@
 import { createReadStream } from "node:fs";
-import { Body, Controller, ForbiddenException, Get, Param, Post, Res, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Param,
+  Post,
+  Res,
+  UseGuards,
+} from "@nestjs/common";
 import { Throttle } from "@nestjs/throttler";
 import type { FastifyReply } from "fastify";
+import type Redis from "ioredis";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { FullAccountGuard } from "../../common/guards/full-account.guard";
 import { type AuthenticatedUser, JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
+import { REDIS_CLIENT } from "../../redis/redis.module";
 import { RoomsService } from "../rooms/rooms.service";
 import { AddVideoDto } from "./dto/add-video.dto";
 import { toVideoAssetDto } from "./video.presenter";
@@ -15,6 +28,8 @@ import { VideoCacheService } from "./video-cache.service";
 // the endpoint the plan flagged as needing extra governance, since a Cloudflare Quick Tunnel caps
 // in-flight requests at 200: many small HLS segment GETs across a few active rooms can burn
 // through that fast without a guard.
+const GUEST_VIDEOS_PER_HOUR = 10;
+
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class VideoProxyController {
@@ -22,7 +37,27 @@ export class VideoProxyController {
     private readonly videos: VideoService,
     private readonly cache: VideoCacheService,
     private readonly rooms: RoomsService,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
+
+  // A guest who hosts may pick the video for their own room — that is the whole point of
+  // "start watching without signing up" — but never for someone else's. Because the server
+  // fetches `sourceUrl` itself, anonymous hosts also get a hard per-guest hourly ceiling; real
+  // accounts are not limited here.
+  private async assertMayAddVideo(roomId: string, user: AuthenticatedUser): Promise<void> {
+    if (!user.isGuest) return;
+    const room = await this.rooms.findById(roomId);
+    if (room.ownerId !== user.sub) throw new ForbiddenException("Видео в этой комнате добавляет только её хозяин");
+    const key = `video:add:guest:${user.sub}`;
+    const count = await this.redis.incr(key);
+    if (count === 1) await this.redis.expire(key, 3600);
+    if (count > GUEST_VIDEOS_PER_HOUR) {
+      throw new HttpException(
+        "Слишком много видео за час — создайте аккаунт или подождите",
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+  }
 
   // Membership is checked here, not just at the room level: without it any authenticated user who
   // learns a room UUID could attach a video to someone else's room — and since `sourceUrl` is
@@ -45,12 +80,11 @@ export class VideoProxyController {
     if (!memberships.some(Boolean)) throw new ForbiddenException("Not a member of any room with this video");
   }
 
-  // Guests watch what the host picked; they don't get to point the server at new URLs. This also
-  // keeps the fetch-a-user-supplied-URL surface behind a real account.
+  // Real accounts and guest *owners* only; invited guests watch what the host picked.
   @Post("rooms/:roomId/videos")
-  @UseGuards(FullAccountGuard)
   async addVideo(@Param("roomId") roomId: string, @Body() dto: AddVideoDto, @CurrentUser() user: AuthenticatedUser) {
     await this.assertMember(roomId, user.sub);
+    await this.assertMayAddVideo(roomId, user);
     const asset = await this.videos.addVideoToRoom(roomId, dto.sourceUrl, user.sub);
     return { video: toVideoAssetDto(asset) };
   }

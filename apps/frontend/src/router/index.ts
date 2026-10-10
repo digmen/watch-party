@@ -3,6 +3,7 @@ import { hasSessionHint } from "../api/client";
 import { useAuthStore } from "../stores/auth.store";
 import AboutView from "../views/AboutView.vue";
 import LandingView from "../views/LandingView.vue";
+import LegalView from "../views/LegalView.vue";
 import LoginView from "../views/LoginView.vue";
 import NotFoundView from "../views/NotFoundView.vue";
 import RoomCreateView from "../views/RoomCreateView.vue";
@@ -16,6 +17,8 @@ const router = createRouter({
     { path: "/", name: "landing", component: LandingView },
     { path: "/about", name: "about", component: AboutView },
     { path: "/login", name: "login", component: LoginView },
+    { path: "/privacy", name: "privacy", component: LegalView },
+    { path: "/terms", name: "terms", component: LegalView },
     { path: "/rooms", name: "rooms", component: RoomListView, meta: { requiresAuth: true, requiresFullAccount: true } },
     {
       path: "/rooms/new",

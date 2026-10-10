@@ -49,9 +49,11 @@ const playerRef = ref<InstanceType<typeof VideoPlayer> | null>(null);
 
 const roomUrl = computed(() => `${window.location.origin}/rooms/${roomId}`);
 const isAlone = computed(() => player.members.length <= 1);
-// Guests watch what the host picked — the backend enforces this too (FullAccountGuard on
-// addVideo); this just keeps the UI honest rather than offering a button that would 403.
-const canManageVideo = computed(() => auth.isAuthenticated && !auth.isGuest);
+// Invited guests watch what the host picked. A guest who *started* the room is its host and may
+// pick the video — the backend enforces the same rule on addVideo; this keeps the UI honest.
+const roomOwnerId = ref<string | null>(null);
+const isRoomOwner = computed(() => roomOwnerId.value !== null && roomOwnerId.value === auth.user?.id);
+const canManageVideo = computed(() => auth.isAuthenticated && (!auth.isGuest || isRoomOwner.value));
 const showVideoForm = computed(
   () => canManageVideo.value && (changingVideo.value || !videoAsset.value || videoAsset.value.status === "failed"),
 );
@@ -122,7 +124,8 @@ async function enterRoom() {
   entering.value = true;
   enterError.value = null;
   try {
-    await roomsApi.join(roomId);
+    const joined = await roomsApi.join(roomId);
+    roomOwnerId.value = joined.room.ownerId;
     await player.enterRoom(roomId);
     await chat.enterRoom(roomId);
 
@@ -240,7 +243,7 @@ function leave() {
       <button class="quiet" @click="leave">← {{ auth.isGuest ? "На главную" : "К комнатам" }}</button>
 
       <div class="share">
-        <input :value="roomUrl" readonly aria-label="Ссылка на комнату" @focus="($event.target as HTMLInputElement).select()" />
+        <input type="text" :value="roomUrl" readonly aria-label="Ссылка на комнату" @focus="($event.target as HTMLInputElement).select()" />
         <button class="ghost" @click="copyRoomLink">{{ copied ? "Скопировано" : "Скопировать ссылку" }}</button>
       </div>
     </header>
@@ -258,7 +261,8 @@ function leave() {
         -->
         <form v-if="showVideoForm" class="add-video card" @submit.prevent="submitVideo">
           <h2>Что смотрим?</h2>
-          <input v-model="sourceUrlInput" type="url" required placeholder="Ссылка на .mp4, .m3u8, ok.ru или VK Видео" />
+          <p class="hint">Вставьте ссылку на видео — прямую (.mp4, .m3u8), ok.ru или VK Видео. Друзья увидят его синхронно.</p>
+          <input v-model="sourceUrlInput" type="url" required placeholder="https://…" />
           <div class="row">
             <button type="submit" :disabled="addingVideo">{{ addingVideo ? "Добавляем…" : "Добавить видео" }}</button>
             <button v-if="changingVideo" type="button" class="quiet" @click="changingVideo = false">Отмена</button>
@@ -278,7 +282,10 @@ function leave() {
           <p>Готовим видео на сервере — сервер скачивает поток, чтобы он не тормозил ни у кого из вас.</p>
         </div>
 
-        <p v-else class="preparing card">Ждём, пока хост добавит видео…</p>
+        <div v-else class="stage-empty card">
+          <span class="stage-icon" aria-hidden="true">▶</span>
+          <p>Ждём, пока хозяин комнаты выберет, что смотрим…</p>
+        </div>
 
         <div v-if="videoAsset?.status === 'ready' && !changingVideo" class="controls">
           <button @click="togglePlay">{{ player.playback.status === "playing" ? "Пауза" : "Смотреть" }}</button>
@@ -348,6 +355,34 @@ function leave() {
 .share input {
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+  background: var(--color-surface);
+  text-overflow: ellipsis;
+}
+.stage-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  aspect-ratio: 16 / 9;
+  text-align: center;
+  color: var(--color-text-muted);
+  background: linear-gradient(135deg, #1b2230, #10141b);
+}
+.stage-icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  display: grid;
+  place-items: center;
+  padding-left: 4px;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  color: var(--color-accent);
+  font-size: var(--text-xl);
+}
+.hint {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 .share button {
   white-space: nowrap;
