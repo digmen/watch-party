@@ -10,8 +10,8 @@ import {
 import { and, count, desc, eq, gt } from "drizzle-orm";
 import type Redis from "ioredis";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
-import { REDIS_CLIENT } from "../../redis/redis.module";
 import { type Room, roomMembers, rooms, roomVideos, users, videoAssets } from "../../database/schema";
+import { REDIS_CLIENT } from "../../redis/redis.module";
 
 export interface RoomMemberRow {
   userId: string;
