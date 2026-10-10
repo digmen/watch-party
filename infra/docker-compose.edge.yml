@@ -1,11 +1,11 @@
 # Optional edge container (enable with WP_EDGE=1 in infra/.env) for a host where 80/443 are taken.
-# Cloudflare connects to it on 8443; certificates live on the host in /root/certs (watch.pem/.key).
+# Cloudflare connects to it on 9443; certificates live on the host in /root/certs (watch.pem/.key).
 services:
   edge:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
-      - "8443:8443"
+      - "9443:9443"
     volumes:
       - ./Caddyfile.edge:/etc/caddy/Caddyfile:ro
       - /root/certs:/certs:ro
