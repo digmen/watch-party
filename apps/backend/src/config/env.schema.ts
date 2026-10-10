@@ -20,6 +20,9 @@ export const EnvSchema = z.object({
   VIDEO_CACHE_PATH: z.string().default("/data/video-cache"),
   VIDEO_CACHE_TTL_HOURS: z.coerce.number().int().positive().default(24),
   // Hard ceiling for the whole cache: a 2-hour film is 3-5 GB, and the disk is shared with other things.
+  // A room nobody has touched for this long (no one joined, wrote, pressed anything) is removed.
+  ROOM_IDLE_HOURS: z.coerce.number().positive().default(24),
+  ROOM_CLEANUP_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
   VIDEO_CACHE_MAX_GB: z.coerce.number().positive().default(15),
   MAX_CONCURRENT_STREAMS: z.coerce.number().int().positive().default(8),
 

@@ -97,6 +97,8 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
       // Expired stall entries must not freeze a room forever.
       if (await this.stall.isAutoPaused(roomId)) await this.settleStall(roomId, "system");
       await this.maybeAutoplay(roomId);
+      // Somebody sitting in the room keeps it alive even when nothing is being pressed.
+      if ((await this.presence.listMembers(roomId)).length > 0) await this.rooms.touch(roomId);
       const state = await this.playbackState.get(roomId);
       if (state.status !== "playing") continue;
 
@@ -142,6 +144,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     const room = await this.rooms.findById(body.roomId);
     await socket.join(body.roomId);
     this.localActiveRooms.add(body.roomId);
+    await this.rooms.touch(body.roomId);
     await this.presence.addSocket(body.roomId, socket.id, {
       userId,
       displayName: (await this.rooms.listMembers(body.roomId)).find((m) => m.userId === userId)?.displayName ?? "?",
@@ -268,15 +271,28 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     socket.emit(SocketEvents.TimeSync, { clientSentMs: body.clientSentMs, serverTimeMs: Date.now() });
   }
 
+  // "X is typing…" is relayed to everybody else in the room; nothing is stored.
+  @SubscribeMessage(SocketEvents.ChatTyping)
+  async onChatTyping(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string }) {
+    const userId = (socket.data as SocketData).userId;
+    if (!(await this.rooms.isMember(body.roomId, userId))) return;
+    const name = (await this.rooms.listMembers(body.roomId)).find((m) => m.userId === userId)?.displayName ?? "?";
+    socket.to(body.roomId).emit(SocketEvents.ChatTyping, { roomId: body.roomId, userId, displayName: name });
+  }
+
   @SubscribeMessage(SocketEvents.ChatMessage)
-  async onChatMessage(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; body: string }) {
+  async onChatMessage(
+    @ConnectedSocket() socket: Socket,
+    @MessageBody() body: { roomId: string; body: string; replyToId?: string },
+  ) {
     const userId = (socket.data as SocketData).userId;
     if (!(await this.rooms.isMember(body.roomId, userId))) return;
 
-    const parsed = SendChatMessageSchema.safeParse({ body: body.body });
+    const parsed = SendChatMessageSchema.safeParse({ body: body.body, replyToId: body.replyToId });
     if (!parsed.success) return;
 
-    const row = await this.chat.post(body.roomId, userId, parsed.data.body);
+    await this.rooms.touch(body.roomId);
+    const row = await this.chat.post(body.roomId, userId, parsed.data.body, parsed.data.replyToId);
     this.server.to(body.roomId).emit(SocketEvents.ChatMessage, toChatMessageDto(row));
   }
 

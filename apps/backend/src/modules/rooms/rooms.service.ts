@@ -27,6 +27,12 @@ export class RoomsService {
     @Inject(REDIS_CLIENT) private readonly redis: Redis,
   ) {}
 
+  // "Something happened in this room." At most one write a minute per room, however chatty it is.
+  async touch(roomId: string): Promise<void> {
+    if ((await this.redis.set(`room:touch:${roomId}`, "1", "EX", 60, "NX")) !== "OK") return;
+    await this.db.update(rooms).set({ lastActiveAt: new Date() }).where(eq(rooms.id, roomId));
+  }
+
   // Room names are free text and may repeat; what is limited is how fast one guest can create
   // rooms (a registered account is not throttled here).
   async assertMayCreate(userId: string, isGuest: boolean): Promise<void> {

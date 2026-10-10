@@ -655,6 +655,210 @@ const SCENARIOS = {
       await b.close();
     }
   },
+
+  // Chat: every message shows who wrote it, a reply carries a quote of the original (clicking it jumps
+  // back), and the others see "X is typing…".
+  async "chat-reply-author-typing"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const url = await createRoomAsHost(host.page);
+      const friend = await newViewer(b);
+      await friend.page.goto(url, { waitUntil: "networkidle" });
+      await friend.page.fill(t("guest-name"), "Друг");
+      await friend.page.click(t("guest-submit"));
+      await friend.page.waitForSelector(t("chat-input"), { timeout: 30000 });
+
+      await friend.page.fill(t("chat-input"), "первое сообщение");
+      await friend.page.click(t("chat-send"));
+      await friend.page.fill(t("chat-input"), "второе сообщение");
+      await friend.page.click(t("chat-send"));
+      check(
+        await waitFor(async () => (await host.page.locator(t("chat-message")).count()) === 2, 15000),
+        "хозяин не получил два сообщения",
+      );
+      // Two messages in a row from one person: BOTH carry the author's name.
+      const authors = await host.page.locator(t("chat-author")).allInnerTexts();
+      check(
+        authors.length === 2 && authors.every((a) => a.trim() === "Друг"),
+        `имя не у каждого сообщения: ${JSON.stringify(authors)}`,
+      );
+
+      // Typing indicator on the friend's side while the host types.
+      await host.page.locator(t("chat-input")).pressSequentially("пишу ответ", { delay: 60 });
+      check(
+        await waitFor(
+          async () =>
+            /Хозяин печатает/.test(
+              await friend.page
+                .locator(t("chat-typing"))
+                .innerText()
+                .catch(() => ""),
+            ),
+          8000,
+        ),
+        "друг не видит «печатает…»",
+      );
+
+      // Reply to the FIRST message.
+      await host.page.fill(t("chat-input"), "");
+      const first = host.page.locator(t("chat-message")).first();
+      await first.hover();
+      await first.locator(t("chat-reply")).click();
+      check(
+        (await host.page.locator(t("chat-replying")).innerText()).includes("первое сообщение"),
+        "строка «ответ на…» не показала оригинал",
+      );
+      await host.page.fill(t("chat-input"), "это ответ");
+      await host.page.click(t("chat-send"));
+
+      check(
+        await waitFor(async () => (await friend.page.locator(t("chat-quote")).count()) === 1, 15000),
+        "у друга нет цитаты в ответе",
+      );
+      const quote = await friend.page.locator(t("chat-quote")).innerText();
+      check(quote.includes("Друг") && quote.includes("первое сообщение"), `цитата не та: ${quote}`);
+      // The same quote survives a reload (it comes from stored history, not only from live events).
+      await friend.page.reload({ waitUntil: "networkidle" });
+      await friend.page.waitForSelector(t("chat-input"), { timeout: 30000 });
+      check(
+        await waitFor(async () => (await friend.page.locator(t("chat-quote")).count()) === 1, 10000),
+        "после перезагрузки цитата пропала",
+      );
+      return "имя у каждого сообщения, «печатает…», ответ с цитатой (живой и из истории)";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // The host loses the connection (tunnel, Wi-Fi switch) while the friend keeps going. When the host
+  // comes back he is still the owner, sees the state the friend left, and gets the chat he missed.
+  async "reconnect-host"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      let blocked = false;
+      const live = [];
+      await host.page.routeWebSocket(/socket\.io/, (ws) => {
+        if (blocked) return ws.close();
+        live.push({ ws, server: ws.connectToServer() });
+      });
+      const url = await createRoomAsHost(host.page);
+      await addVideo(host.page);
+      const friend = await newViewer(b);
+      await joinAsGuest(friend.page, url, "Друг");
+      await host.page.click(t("play-toggle"));
+      await sleep(3000);
+
+      blocked = true;
+      for (const c of live.splice(0)) await c.ws.close({ code: 1006 }).catch(() => {});
+      await sleep(3000);
+      await friend.page.click(t("play-toggle")); // friend pauses while the host is cut off
+      await friend.page.fill(t("chat-input"), "ты пропустил это");
+      await friend.page.click(t("chat-send"));
+      await sleep(2000);
+
+      blocked = false;
+      check(
+        await waitFor(async () => (await state(host.page))?.paused === true, 40000),
+        "хозяин не получил паузу после возврата",
+      );
+      check(
+        await waitFor(
+          async () => (await host.page.locator(t("chat-log")).innerText()).includes("ты пропустил это"),
+          20000,
+        ),
+        "хозяин не получил пропущенное сообщение",
+      );
+      check(
+        (await host.page.getByRole("button", { name: "Настройки комнаты" }).count()) > 0,
+        "хозяин потерял права владельца",
+      );
+      check((await host.page.locator(t("queue-add-input")).count()) > 0, "у хозяина пропала очередь");
+      const [h, f] = [await state(host.page), await state(friend.page)];
+      check(Math.abs(h.t - f.t) < 2, `позиции разошлись: ${h.t} / ${f.t}`);
+      return "хозяин вернулся: права, пауза, позиция и пропущенный чат на месте";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // A viewer is offline while the room moves on to the next video; when he returns he must be
+  // on the NEW video and see the new queue, not stare at the old one.
+  async "reconnect-mid-switch"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const url = await createRoomAsHost(host.page);
+      await addVideo(host.page, FLOWER);
+      await host.page.fill(t("queue-add-input"), BBB_360);
+      await host.page.click(t("queue-add-submit"));
+      const friend = await newViewer(b);
+      let blocked = false;
+      const live = [];
+      await friend.page.routeWebSocket(/socket\.io/, (ws) => {
+        if (blocked) return ws.close();
+        live.push({ ws, server: ws.connectToServer() });
+      });
+      await joinAsGuest(friend.page, url, "Друг");
+      check(
+        await waitFor(async () => (await friend.page.locator(t("queue-item")).count()) === 2, 15000),
+        "друг не видит очередь",
+      );
+
+      blocked = true;
+      for (const c of live.splice(0)) await c.ws.close({ code: 1006 }).catch(() => {});
+      await sleep(1500);
+      await host.page.click(t("queue-next"));
+      await sleep(2500);
+      blocked = false;
+
+      const title = async () =>
+        (await friend.page
+          .locator(`${t("queue-item")}[data-status="playing"]`)
+          .getAttribute("data-title")
+          .catch(() => "")) ?? "";
+      check(
+        await waitFor(async () => /360/.test(await title()), 40000),
+        `после возврата друг не увидел новое видео в очереди: «${await title()}»`,
+      );
+      const switched = await waitFor(async () => {
+        const s = await state(friend.page);
+        return s && s.dur >= 8 && s.dur <= 14; // the 10-second clip, not the 5-second flower
+      }, 40000);
+      check(switched, `друг остался на старом видео: ${JSON.stringify(await state(friend.page))}`);
+      return "друг вернулся и оказался на новом видео с новой очередью";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // Needs a backend started with ROOM_IDLE_HOURS=0.002 ROOM_CLEANUP_INTERVAL_MS=3000, otherwise skipped.
+  async "room-expiry"() {
+    if (process.env.QA_ROOM_EXPIRY !== "1")
+      throw new Error("SKIP: нужен бэкенд с ROOM_IDLE_HOURS=0.002 и QA_ROOM_EXPIRY=1");
+    const b = await launch();
+    try {
+      const gone = await newViewer(b);
+      const urlGone = await createRoomAsHost(gone.page);
+      await gone.ctx.close(); // the creator leaves: nobody is in the room any more
+      const kept = await newViewer(b);
+      const urlKept = await createRoomAsHost(kept.page); // somebody stays inside
+      await sleep(16000);
+      const probe = await newViewer(b);
+      await probe.page.goto(urlGone, { waitUntil: "networkidle" });
+      check(
+        await waitFor(async () => /не найдена/i.test(await probe.page.innerText("body")), 8000),
+        "забытая комната не удалилась",
+      );
+      await probe.page.goto(urlKept, { waitUntil: "networkidle" });
+      await sleep(1500);
+      check(!/не найдена/i.test(await probe.page.innerText("body")), "комната, в которой сидят, удалилась");
+      return "пустая комната удалена, занятая осталась";
+    } finally {
+      await b.close();
+    }
+  },
 };
 
 const names = Object.keys(SCENARIOS).filter((n) => only.length === 0 || only.includes(n));
@@ -665,6 +869,11 @@ for (const name of names) {
     results.push({ name, ok: true, note });
     console.log(`PASS ${name} (${((Date.now() - t0) / 1000).toFixed(0)}s): ${note}`);
   } catch (e) {
+    if (String(e.message).startsWith("SKIP:")) {
+      results.push({ name, ok: true, note: e.message });
+      console.log(`SKIP ${name}: ${e.message.slice(5).trim()}`);
+      continue;
+    }
     results.push({ name, ok: false, note: e.message });
     console.log(`FAIL ${name} (${((Date.now() - t0) / 1000).toFixed(0)}s): ${e.message}`);
   }

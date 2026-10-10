@@ -147,8 +147,16 @@ export class RoomSocket {
     this.socket?.on(SocketEvents.RoomStall, handler);
   }
 
-  sendChatMessage(roomId: string, body: string): void {
-    this.socket?.emit(SocketEvents.ChatMessage, { roomId, body });
+  sendChatMessage(roomId: string, body: string, replyToId?: string): void {
+    this.socket?.emit(SocketEvents.ChatMessage, { roomId, body, replyToId });
+  }
+
+  emitTyping(roomId: string): void {
+    this.socket?.emit(SocketEvents.ChatTyping, { roomId });
+  }
+
+  onChatTyping(handler: (event: { roomId: string; userId: string; displayName: string }) => void): void {
+    this.socket?.on(SocketEvents.ChatTyping, handler);
   }
 
   onChatMessage(handler: ChatHandler): void {

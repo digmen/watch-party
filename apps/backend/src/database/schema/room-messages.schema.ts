@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { type AnyPgColumn, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { rooms } from "./rooms.schema";
 import { users } from "./users.schema";
 
@@ -12,6 +12,8 @@ export const roomMessages = pgTable("room_messages", {
     .notNull()
     .references(() => users.id, { onDelete: "cascade" }),
   body: text("body").notNull(),
+  // The message this one answers. If the original is ever removed the quote just disappears.
+  replyToId: uuid("reply_to_id").references((): AnyPgColumn => roomMessages.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

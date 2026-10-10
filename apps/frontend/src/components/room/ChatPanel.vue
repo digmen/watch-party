@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChatMessageDto } from "@watch-party/shared";
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 
 export interface ChatNotice {
   id: string;
@@ -15,30 +15,35 @@ const props = defineProps<{
   selfId: string | null;
   alone: boolean;
   inviteCopied: boolean;
+  typingNames: string[];
 }>();
-const emit = defineEmits<{ send: [text: string]; invite: [] }>();
+const emit = defineEmits<{ send: [text: string, replyToId?: string]; invite: []; typing: [] }>();
 
 const text = ref("");
 const log = ref<HTMLElement | null>(null);
+const input = ref<HTMLInputElement | null>(null);
 const pinnedToBottom = ref(true);
 const unread = ref(0);
+const replyTo = ref<ChatMessageDto | null>(null);
+const flashId = ref<string | null>(null);
 
-type Row = (ChatMessageDto & { system?: false; mine: boolean; showName: boolean }) | ChatNotice;
+type Row = (ChatMessageDto & { system?: false; mine: boolean }) | ChatNotice;
 
-// One timeline: persisted messages plus local "X зашёл" notices, oldest first. Consecutive
-// messages from one person only repeat the name when someone else spoke in between.
+// One timeline: persisted messages plus local "X зашёл" notices, oldest first.
 const rows = computed<Row[]>(() => {
   const merged = [...props.messages, ...props.notices].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  let lastAuthor: string | null = null;
   return merged.map((m): Row => {
-    if ("system" in m) {
-      lastAuthor = null;
-      return m;
-    }
-    const showName = lastAuthor !== m.userId;
-    lastAuthor = m.userId;
-    return { ...m, mine: m.userId === props.selfId, showName };
+    if ("system" in m) return m;
+    return { ...m, mine: m.userId === props.selfId };
   });
+});
+
+const typingLabel = computed(() => {
+  const names = props.typingNames;
+  if (names.length === 0) return "";
+  if (names.length === 1) return `${names[0]} печатает…`;
+  if (names.length === 2) return `${names[0]} и ${names[1]} печатают…`;
+  return "Несколько человек печатают…";
 });
 
 const PALETTE = ["#ff8a65", "#ffd54f", "#81c784", "#4dd0e1", "#7986cb", "#ba68c8", "#f06292", "#a1887f"];
@@ -80,11 +85,39 @@ watch(
   },
 );
 
+function startReply(message: ChatMessageDto) {
+  replyTo.value = message;
+  input.value?.focus();
+}
+
+// Clicking a quote scrolls to the original and flashes it.
+function jumpTo(id: string) {
+  const el = log.value?.querySelector<HTMLElement>(`[data-message-id="${id}"]`);
+  if (!el) return;
+  el.scrollIntoView({ block: "center", behavior: "smooth" });
+  flashId.value = id;
+  setTimeout(() => {
+    if (flashId.value === id) flashId.value = null;
+  }, 1600);
+}
+
+// Phones have no hover: a long press on a message starts a reply.
+let pressTimer: ReturnType<typeof setTimeout> | null = null;
+function pressStart(message: ChatMessageDto) {
+  pressTimer = setTimeout(() => startReply(message), 450);
+}
+function pressEnd() {
+  if (pressTimer) clearTimeout(pressTimer);
+  pressTimer = null;
+}
+onBeforeUnmount(pressEnd);
+
 function submit() {
   const v = text.value.trim();
   if (!v) return;
-  emit("send", v);
+  emit("send", v, replyTo.value?.id);
   text.value = "";
+  replyTo.value = null;
   nextTick(toBottom);
 }
 </script>
@@ -106,14 +139,34 @@ function submit() {
 
       <template v-for="r in rows" :key="r.id">
         <p v-if="'system' in r" class="notice">{{ r.body }}</p>
-        <div v-else class="msg" :class="{ mine: r.mine }">
-          <span v-if="!r.mine" class="avatar" :style="{ background: colorFor(r.userId) }" :class="{ ghosted: !r.showName }">
-            {{ r.showName ? initial(r.displayName) : "" }}
-          </span>
+        <div
+          v-else
+          class="msg"
+          :class="{ mine: r.mine, flash: flashId === r.id }"
+          :data-message-id="r.id"
+          data-testid="chat-message"
+          @pointerdown="pressStart(r)"
+          @pointerup="pressEnd"
+          @pointerleave="pressEnd"
+          @pointercancel="pressEnd"
+        >
+          <span v-if="!r.mine" class="avatar" :style="{ background: colorFor(r.userId) }">{{ initial(r.displayName) }}</span>
           <div class="bubble">
-            <span v-if="!r.mine && r.showName" class="author" :style="{ color: colorFor(r.userId) }">{{ r.displayName }}</span>
+            <span class="author" data-testid="chat-author" :style="{ color: r.mine ? undefined : colorFor(r.userId) }">
+              {{ r.mine ? "Вы" : r.displayName }}
+            </span>
+            <button
+              v-if="r.replyTo"
+              type="button"
+              class="quote"
+              data-testid="chat-quote"
+              @click="jumpTo(r.replyTo.id)"
+            >
+              <b>{{ r.replyTo.displayName }}</b> {{ r.replyTo.snippet }}
+            </button>
             <span class="body">{{ r.body }}</span>
             <time class="time">{{ hhmm(r.createdAt) }}</time>
+            <button type="button" class="reply-btn" data-testid="chat-reply" aria-label="Ответить" title="Ответить" @click="startReply(r)">↩</button>
           </div>
         </div>
       </template>
@@ -121,8 +174,16 @@ function submit() {
 
     <button v-if="unread > 0" class="jump" @click="toBottom">↓ Новые сообщения · {{ unread }}</button>
 
+    <p v-if="typingLabel" class="typing" data-testid="chat-typing" role="status">{{ typingLabel }}</p>
+
+    <div v-if="replyTo" class="replying" data-testid="chat-replying">
+      <span class="replying-text"><b>{{ replyTo.userId === selfId ? "Вы" : replyTo.displayName }}</b> {{ replyTo.body }}</span>
+      <button type="button" class="icon" aria-label="Отменить ответ" @click="replyTo = null">✕</button>
+    </div>
+
     <form class="composer" @submit.prevent="submit">
       <input
+        ref="input"
         v-model="text"
         data-testid="chat-input"
         type="text"
@@ -131,6 +192,7 @@ function submit() {
         aria-label="Сообщение"
         enterkeyhint="send"
         autocomplete="off"
+        @input="emit('typing')"
       />
       <button type="submit" data-testid="chat-send" class="send" :disabled="!text.trim()" aria-label="Отправить">➤</button>
     </form>
@@ -164,7 +226,7 @@ function submit() {
   padding: var(--space-3) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2);
   overscroll-behavior: contain;
 }
 .empty {
@@ -182,18 +244,22 @@ function submit() {
   text-align: center;
   color: var(--color-text-faint);
   font-size: var(--text-xs);
-  padding: var(--space-2) 0;
+  padding: var(--space-1) 0;
 }
 .msg {
   display: flex;
   gap: var(--space-2);
   align-items: flex-end;
-  max-width: 92%;
-  margin-top: 2px;
+  max-width: 94%;
+  border-radius: var(--radius);
+  transition: background 300ms;
 }
 .msg.mine {
   align-self: flex-end;
   flex-direction: row-reverse;
+}
+.msg.flash {
+  background: rgb(255 255 255 / 0.1);
 }
 .avatar {
   flex: none;
@@ -206,13 +272,11 @@ function submit() {
   font-weight: 700;
   color: #14181f;
 }
-.avatar.ghosted {
-  background: transparent !important;
-}
 .bubble {
+  position: relative;
   background: var(--color-surface-raised);
   border-radius: 14px;
-  padding: 0.4rem 0.7rem 0.3rem;
+  padding: 0.35rem 0.7rem 0.3rem;
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
@@ -226,6 +290,32 @@ function submit() {
   width: 100%;
   font-size: var(--text-xs);
   font-weight: 650;
+  color: var(--color-text-muted);
+}
+.quote {
+  width: 100%;
+  margin: 2px 0 4px;
+  padding: 0.2rem 0.5rem;
+  text-align: left;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  color: var(--color-text-muted);
+  background: rgb(255 255 255 / 0.06);
+  border: none;
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quote:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.1);
+  transform: none;
+}
+.quote b {
+  color: var(--color-text);
+  margin-right: 0.3rem;
 }
 .body {
   font-size: var(--text-sm);
@@ -237,15 +327,69 @@ function submit() {
   color: var(--color-text-faint);
   font-size: 0.65rem;
 }
+/* Appears on hover (desktop); on touch screens a long press does the same job. */
+.reply-btn {
+  position: absolute;
+  top: -0.7rem;
+  right: 0.3rem;
+  padding: 0.05rem 0.45rem;
+  font-size: var(--text-xs);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+.msg:hover .reply-btn,
+.reply-btn:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
 .jump {
   position: absolute;
   left: 50%;
-  bottom: 4.2rem;
+  bottom: 5.4rem;
   transform: translateX(-50%);
   padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-full);
   font-size: var(--text-xs);
   box-shadow: var(--shadow);
+}
+.typing {
+  padding: 0 var(--space-4) var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  min-height: 1.2rem;
+}
+.replying {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0 var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface-raised);
+  border-left: 3px solid var(--color-accent);
+  border-radius: 6px;
+  font-size: var(--text-xs);
+}
+.replying-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+.replying-text b {
+  color: var(--color-text);
+  margin-right: 0.3rem;
+}
+.icon {
+  background: transparent;
+  color: var(--color-text-muted);
+  padding: 0 var(--space-2);
 }
 .composer {
   display: flex;

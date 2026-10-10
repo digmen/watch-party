@@ -1,0 +1,2 @@
+ALTER TABLE "room_messages" ADD COLUMN "reply_to_id" uuid;--> statement-breakpoint
+ALTER TABLE "room_messages" ADD CONSTRAINT "room_messages_reply_to_id_room_messages_id_fk" FOREIGN KEY ("reply_to_id") REFERENCES "public"."room_messages"("id") ON DELETE set null ON UPDATE no action;

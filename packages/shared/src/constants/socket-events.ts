@@ -18,6 +18,8 @@ export const SocketEvents = {
   RoomStall: "room:stall",
   TimeSync: "time:sync",
   ChatMessage: "chat:message",
+  // "X is typing…": client -> server on keystrokes (throttled), server -> the rest of the room.
+  ChatTyping: "chat:typing",
   // Server -> clients when the room's current video is swapped or finishes preparing. Without it
   // the only way to learn about a new video was reloading the page — and a viewer who arrived
   // before any video existed would sit on a dead screen indefinitely.

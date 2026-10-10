@@ -93,6 +93,11 @@ export const usePlayerStore = defineStore("player", {
       }
     },
 
+    // Run after every automatic re-join. The room may have moved to another video while we were away.
+    onReconnected(handler: () => void) {
+      roomSocket.onReconnect(() => handler());
+    },
+
     reportReady(assetId: string) {
       if (this.roomId) roomSocket.emitReady(this.roomId, assetId);
     },

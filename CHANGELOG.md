@@ -6,6 +6,11 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- **Chat**: author name on every message ("Вы" for your own), replies with a quote of the original (hover button / long press, click on the quote jumps back, survives reload), "X печатает…", unread jump. Migration 0007 (`room_messages.reply_to_id`).
+- **Idle rooms are removed** after 24 h without any activity (join, chat, queue, someone sitting inside keeps it alive); `ROOM_IDLE_HOURS`, `ROOM_CLEANUP_INTERVAL_MS`.
+- After a reconnect the client also re-checks which video is current and refreshes the queue (the room may have moved on while the phone was offline).
+- QA: chat-reply-author-typing, reconnect-host, reconnect-mid-switch, room-expiry (needs a backend with a short idle time).
+
 - **Video queue**: a room has a current video plus an ordered queue (add by link, remove, reorder with arrows or drag, "play now", "next"). When a video ends the next one takes over by itself and starts once everybody has the first seconds (max 15 s wait). Owner chooses who may add: everyone or only themselves (default "only owner" for public rooms). API: `GET/DELETE /rooms/:id/queue`, `POST …/queue/next|reorder|:itemId/play`; socket `queue:updated`, `player:ready`, `player:ended`.
 - **Startup gate**: nobody can press play until ~5 s are buffered on their device ("Загружаем первые секунды…"); a queued video that finishes downloading no longer replaces the current one on screen.
 - Migration 0006: `room_videos.status`, `rooms.queue_add_policy`, `rooms.last_active_at`.

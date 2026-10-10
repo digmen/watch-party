@@ -92,6 +92,7 @@ export class VideoProxyController {
   async addVideo(@Param("roomId") roomId: string, @Body() dto: AddVideoDto, @CurrentUser() user: AuthenticatedUser) {
     await this.assertMember(roomId, user.sub);
     await this.assertMayAddVideo(roomId, user);
+    await this.rooms.touch(roomId);
     const { asset, becameCurrent } = await this.videos.addVideoToRoom(roomId, dto.sourceUrl, user.sub);
     return { video: toVideoAssetDto(asset), becameCurrent };
   }

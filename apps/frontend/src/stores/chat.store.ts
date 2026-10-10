@@ -6,17 +6,26 @@ import { roomSocket } from "../ws/room-socket";
 interface ChatState {
   roomId: string | null;
   messages: ChatMessageDto[];
+  // Who is typing right now: userId -> name + when the last keystroke arrived.
+  typing: Record<string, { name: string; at: number }>;
 }
 
+let lastTypingSent = 0;
+
 export const useChatStore = defineStore("chat", {
-  state: (): ChatState => ({ roomId: null, messages: [] }),
+  state: (): ChatState => ({ roomId: null, messages: [], typing: {} }),
 
   actions: {
     async enterRoom(roomId: string) {
       this.roomId = roomId;
       const { messages } = await chatApi.history(roomId);
       this.messages = messages;
+      roomSocket.onChatTyping((event) => {
+        if (event.roomId === this.roomId) this.typing[event.userId] = { name: event.displayName, at: Date.now() };
+      });
       roomSocket.onChatMessage((message) => {
+        // Whoever just wrote is no longer "typing".
+        delete this.typing[message.userId];
         if (message.roomId === this.roomId && !this.messages.some((m) => m.id === message.id))
           this.messages.push(message);
       });
@@ -34,14 +43,23 @@ export const useChatStore = defineStore("chat", {
       });
     },
 
-    send(body: string) {
+    send(body: string, replyToId?: string) {
       if (!this.roomId || !body.trim()) return;
-      roomSocket.sendChatMessage(this.roomId, body.trim());
+      roomSocket.sendChatMessage(this.roomId, body.trim(), replyToId);
+    },
+
+    // Called on keystrokes; at most one event per 2 s leaves the browser.
+    notifyTyping() {
+      const now = Date.now();
+      if (!this.roomId || now - lastTypingSent < 2000) return;
+      lastTypingSent = now;
+      roomSocket.emitTyping(this.roomId);
     },
 
     leaveRoom() {
       this.roomId = null;
       this.messages = [];
+      this.typing = {};
     },
   },
 });

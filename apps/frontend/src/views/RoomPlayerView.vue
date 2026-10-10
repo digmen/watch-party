@@ -86,6 +86,15 @@ const intendsToPlay = computed(() => isPlaying.value || player.waitingFor.length
 // Nothing to watch yet (or the current video could not be prepared): the big "what do we watch" card.
 const showAddVideo = computed(() => canAddVideo.value && (!videoAsset.value || videoAsset.value.status === "failed"));const alone = computed(() => player.members.length <= 1);
 
+// People who typed within the last few seconds. `clock` ticks once a second so the label fades by itself.
+const clock = ref(Date.now());
+const typingNames = computed(() =>
+  Object.entries(chat.typing)
+    .filter(([userId, t]) => userId !== auth.user?.id && clock.value - t.at < 4000)
+    .map(([, t]) => t.name),
+);
+let clockTimer: ReturnType<typeof setInterval> | null = null;
+
 function fullPlaybackUrl(video: VideoAssetDto): string {
   return `${API_ORIGIN}${video.playbackUrl}`;
 }
@@ -184,6 +193,18 @@ async function enterRoom(password?: string) {
     player.onVideoChanged((video) => {
       preparingSince.value = 0;
       trackAsset(video);
+    });
+
+    // After a network drop the room may have switched videos without us: look again.
+    player.onReconnected(async () => {
+      try {
+        const latest = await videosApi.latestForRoom(roomId);
+        if (latest.video?.id !== videoAsset.value?.id || latest.video?.status !== videoAsset.value?.status) {
+          trackAsset(latest.video);
+        }
+      } catch {
+        // The next reconnect or the status poll catches up.
+      }
     });
 
     const { video } = await videosApi.latestForRoom(roomId);
@@ -337,6 +358,9 @@ function pushNotice(body: string) {
 
 onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
+  clockTimer = setInterval(() => {
+    clock.value = Date.now();
+  }, 1000);
   try {
     const { room } = await roomsApi.preview(roomId);
     requiresPassword.value = room.requiresPassword;
@@ -349,6 +373,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener("keydown", onKeydown);
+  if (clockTimer) clearInterval(clockTimer);
   if (tickTimer) clearInterval(tickTimer);
   if (firstVideoTimer) clearInterval(firstVideoTimer);
   stopPolling();
@@ -512,7 +537,9 @@ function leave() {
           :self-id="auth.user?.id ?? null"
           :alone="alone"
           :invite-copied="copied"
+          :typing-names="typingNames"
           @send="chat.send"
+          @typing="chat.notifyTyping"
           @invite="copyRoomLink"
         />
       </aside>
