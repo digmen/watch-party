@@ -19,6 +19,7 @@ type HeartbeatHandler = (event: HeartbeatEvent) => void;
 type PresenceHandler = (event: PresenceUpdate) => void;
 type ChatHandler = (message: ChatMessageDto) => void;
 type VideoChangedHandler = (video: VideoAssetDto) => void;
+type RejoinResult = { playback: { status: "playing" | "paused"; positionSec: number; updatedAtMs: number } };
 type StallHandler = (event: { roomId: string; waitingFor: string[] }) => void;
 
 export class RoomSocket {
@@ -28,6 +29,13 @@ export class RoomSocket {
   // socket.io fires connect_error on every retry attempt; without this latch a failing
   // reconnect would queue a refresh per attempt and rotate the refresh token against itself.
   private reconnectRefreshInFlight = false;
+  // After any network drop socket.io hands us a NEW socket id, and the server only delivers room
+  // events to sockets that joined the room — so the room must be joined again on every reconnect.
+  // Without this, one metro tunnel or Wi-Fi/LTE switch silently ended synchronisation for good.
+  private currentRoomId: string | null = null;
+  private hasConnectedBefore = false;
+  private timeSyncListening = false;
+  private reconnectHandlers: Array<(playback: RejoinResult | null) => void> = [];
 
   connect(): Socket {
     if (this.socket) return this.socket;
@@ -35,7 +43,16 @@ export class RoomSocket {
     // an empty string explicitly isn't the same thing, so this has to be `undefined`, not "".
     this.socket = io(API_ORIGIN || undefined, { withCredentials: true, transports: ["websocket"] });
 
-    this.socket.on("connect", () => this.startTimeSync());
+    this.socket.on("connect", () => {
+      this.startTimeSync();
+      if (this.hasConnectedBefore && this.currentRoomId) void this.rejoin(this.currentRoomId);
+      this.hasConnectedBefore = true;
+    });
+
+    // The server may close the socket itself (expired token, restart); socket.io does not retry that.
+    this.socket.on("disconnect", (reason) => {
+      if (reason === "io server disconnect") this.socket?.connect();
+    });
 
     // The handshake authenticates from the access-token cookie, which expires after 15 minutes.
     // A room that is simply playing a film issues no HTTP requests for hours, so nothing else
@@ -61,25 +78,39 @@ export class RoomSocket {
       const clientSentMs = Date.now();
       this.socket?.emit(SocketEvents.TimeSync, { clientSentMs });
     };
-    this.socket?.on(SocketEvents.TimeSync, (payload: { clientSentMs: number; serverTimeMs: number }) => {
-      this.clockSync.recordSample(payload.clientSentMs, payload.serverTimeMs, Date.now());
-    });
+    // Listener and timer are set up once per socket / replaced per connect — not stacked on every reconnect.
+    if (!this.timeSyncListening) {
+      this.socket?.on(SocketEvents.TimeSync, (payload: { clientSentMs: number; serverTimeMs: number }) => {
+        this.clockSync.recordSample(payload.clientSentMs, payload.serverTimeMs, Date.now());
+      });
+      this.timeSyncListening = true;
+    }
+    if (this.timeSyncTimer) clearInterval(this.timeSyncTimer);
     ping();
     this.timeSyncTimer = setInterval(ping, TIME_SYNC_INTERVAL_MS);
   }
 
-  joinRoom(
-    roomId: string,
-  ): Promise<
-    { playback: { status: "playing" | "paused"; positionSec: number; updatedAtMs: number } } | { error: string }
-  > {
+  joinRoom(roomId: string): Promise<RejoinResult | { error: string }> {
+    this.currentRoomId = roomId;
     return new Promise((resolve) => {
       this.socket?.emit(SocketEvents.RoomJoin, { roomId }, resolve);
     });
   }
 
+  private async rejoin(roomId: string): Promise<void> {
+    const result = await this.joinRoom(roomId);
+    const playback = "playback" in result ? result : null;
+    for (const handler of this.reconnectHandlers) handler(playback);
+  }
+
+  // Called after every successful automatic re-join, with the room's current playback state.
+  onReconnect(handler: (playback: RejoinResult | null) => void): void {
+    this.reconnectHandlers.push(handler);
+  }
+
   leaveRoom(roomId: string): void {
     this.socket?.emit(SocketEvents.RoomLeave, { roomId });
+    if (this.currentRoomId === roomId) this.currentRoomId = null;
   }
 
   emitPlay(event: PlayEvent & { roomId: string }): void {
@@ -138,6 +169,10 @@ export class RoomSocket {
     if (this.timeSyncTimer) clearInterval(this.timeSyncTimer);
     this.socket?.disconnect();
     this.socket = null;
+    this.currentRoomId = null;
+    this.hasConnectedBefore = false;
+    this.timeSyncListening = false;
+    this.reconnectHandlers = [];
   }
 }
 

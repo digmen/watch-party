@@ -6,6 +6,9 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- Fix: after a network drop (metro, Wi-Fi↔LTE, phone lock) the client re-joins the room, adopts the current playback state and back-fills missed chat. Before, the new socket was never in the room and silently stopped receiving play/pause/seek/stall/chat — found by the `socket-drop` QA scenario, which now cuts the socket for real. Also: no stacked time-sync listeners on reconnect; server-initiated disconnects reconnect.
+- QA runner: `--only` parsing fixed (no flag = all scenarios); backup scripts use a per-host prefix in the shared R2 bucket.
+
 - Room page redesigned: top bar (name, access badge, avatars, invite), controls inside the player that fade out, chat with bubbles/avatars/"X joined" notices/unread jump button, mobile layout (video on top, chat below, input pinned to the bottom), fullscreen with chat overlay (pseudo-fullscreen where the Fullscreen API is missing, e.g. iPhone). `data-testid` hooks for tests.
 - `services/sniffer`: headless Chromium that opens an arbitrary page, presses play and reports the real stream URL + headers; the backend then remuxes it like any other source. Works for pages that hide a player behind iframes/tokens. Network-isolated container, private addresses blocked.
 - fMP4 HLS segments when the source codecs (AV1, VP9, HEVC, Opus…) cannot live in MPEG-TS; H.264/AAC keeps TS.

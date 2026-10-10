@@ -50,6 +50,13 @@ export const usePlayerStore = defineStore("player", {
         this.playback = { status: event.status, positionSec: event.positionSec, updatedAtMs: event.serverTimestampMs };
       });
 
+      // After a network drop the room is re-joined automatically; adopt the state it reports and
+      // forget who we were waiting for (that list is rebuilt by the next stall event).
+      roomSocket.onReconnect((state) => {
+        if (state) this.playback = state.playback;
+        this.waitingFor = [];
+      });
+
       const result = await roomSocket.joinRoom(roomId);
       if ("playback" in result) this.playback = result.playback;
     },

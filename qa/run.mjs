@@ -5,13 +5,15 @@ import { chromium, devices, webkit } from "playwright-core";
 
 const BASE = process.env.QA_BASE ?? "http://localhost:5173";
 const VIDEO = process.env.QA_VIDEO ?? "https://vkvideo.ru/video-195334327_456241064";
-const only = (
-  process.argv.find((a) => a.startsWith("--only="))?.slice(7) ??
-  process.argv[process.argv.indexOf("--only") + 1] ??
-  ""
-)
-  .split(",")
-  .filter((s) => s && !s.startsWith("--"));
+// --only a,b  or  --only=a,b ; no flag means "everything".
+const onlyIdx = process.argv.findIndex((a) => a === "--only" || a.startsWith("--only="));
+const onlyRaw =
+  onlyIdx === -1
+    ? ""
+    : process.argv[onlyIdx].includes("=")
+      ? process.argv[onlyIdx].split("=")[1]
+      : (process.argv[onlyIdx + 1] ?? "");
+const only = onlyRaw.split(",").filter(Boolean);
 
 function findBrowser(prefix, exe) {
   const root = join(process.env.LOCALAPPDATA ?? "", "ms-playwright");
@@ -187,19 +189,42 @@ const SCENARIOS = {
       const url = await createRoomAsHost(host.page);
       await addVideo(host.page);
       const friend = await newViewer(b);
+      // Sit between the friend's page and the server so the socket can be cut for real — the way a
+      // metro tunnel or a Wi-Fi/LTE switch cuts it. (`setOffline` alone leaves a local socket open.)
+      let blocked = false;
+      const live = [];
+      await friend.page.routeWebSocket(/socket\.io/, (ws) => {
+        if (blocked) return ws.close();
+        const server = ws.connectToServer();
+        live.push({ ws, server });
+      });
       await joinAsGuest(friend.page, url, "Друг");
       await host.page.click(t("play-toggle"));
       await sleep(4000);
-      await friend.ctx.setOffline(true);
+
+      blocked = true;
+      for (const c of live.splice(0)) await c.ws.close({ code: 1006 }).catch(() => {});
       await sleep(8000);
-      await host.page.click(t("play-toggle")); // host pauses while friend is offline
+      await host.page.click(t("play-toggle")); // host pauses while the friend is cut off
+      await host.page.evaluate(() => {
+        const input = document.querySelector('[data-testid="chat-input"]');
+        input?.focus();
+      });
+      await host.page.fill(t("chat-input"), "сообщение пока ты был офлайн");
+      await host.page.click(t("chat-send"));
       await sleep(1000);
-      await friend.ctx.setOffline(false);
-      const synced = await waitFor(async () => (await state(friend.page))?.paused === true, 40000);
-      check(synced, "после возврата сети друг не получил паузу хозяина");
+
+      blocked = false;
+      const synced = await waitFor(async () => (await state(friend.page))?.paused === true, 45000);
+      check(synced, "после возврата сети друг не получил паузу хозяина (сокет не вошёл в комнату заново)");
+      const gotChat = await waitFor(
+        async () => (await friend.page.locator(t("chat-log")).innerText()).includes("пока ты был офлайн"),
+        20000,
+      );
+      check(gotChat, "сообщение, отправленное пока друг был офлайн, не догрузилось");
       const [h, f] = [await state(host.page), await state(friend.page)];
       check(Math.abs(h.t - f.t) < 2, `позиции разошлись: ${h.t} vs ${f.t}`);
-      return "сокет восстановился, пауза и позиция получены";
+      return "сокет разорван и восстановлен: пауза, позиция и пропущенный чат получены";
     } finally {
       await b.close();
     }
