@@ -36,6 +36,9 @@ usePageSeo({
 
 // --- access -------------------------------------------------------------------------------
 const entering = ref(false);
+// True once the socket has joined the room and the first data is in. Before that the room UI must not
+// be usable: a chat message typed in that gap would go nowhere and vanish without a trace.
+const entered = ref(false);
 const enterError = ref<string | null>(null);
 const notFound = ref(false);
 const requiresPassword = ref(false);
@@ -219,6 +222,7 @@ async function enterRoom(password?: string) {
       stageRef.value?.refreshDuration();
       if (preparingSince.value) preparingSeconds.value = Math.round((Date.now() - preparingSince.value) / 1000);
     }, 200);
+    entered.value = true;
   } catch (err) {
     if (err instanceof ApiError && (err.message === "PASSWORD_REQUIRED" || err.message === "WRONG_PASSWORD")) {
       passwordPrompt.value = true;
@@ -412,6 +416,11 @@ function leave() {
   </main>
 
   <p v-else-if="enterError" class="enter-error error" role="alert">{{ enterError }}</p>
+
+  <main v-else-if="!entered" class="gate" role="status" data-testid="entering">
+    <span class="spinner" aria-hidden="true"></span>
+    <p class="lede">Заходим в комнату…</p>
+  </main>
 
   <div v-else class="room">
     <RoomTopBar
