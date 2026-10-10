@@ -31,6 +31,12 @@ const results = [];
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const t = (id) => `[data-testid="${id}"]`;
 
+// Short public videos of different lengths, for queue/hand-over scenarios.
+const FLOWER = "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"; // ~5 s
+const BBB_360 = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"; // 10 s
+const BBB_720 = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/720/Big_Buck_Bunny_720_10s_1MB.mp4"; // 10 s
+const BBB_1080 = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/1080/Big_Buck_Bunny_1080_10s_1MB.mp4"; // 10 s
+
 async function launch() {
   return chromium.launch({ executablePath: CHROME, args: ["--autoplay-policy=no-user-gesture-required"] });
 }
@@ -464,15 +470,13 @@ const SCENARIOS = {
       const before = await state(host.page);
       check(before.t > 30, `подготовка не удалась: позиция ${before.t}`);
 
-      await host.page
-        .getByRole("button", { name: /Сменить видео|В очередь/ })
-        .first()
-        .click();
-      await host.page.fill(
-        t("add-video-input"),
-        "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+      await host.page.fill(t("queue-add-input"), FLOWER);
+      await host.page.click(t("queue-add-submit"));
+      await waitFor(
+        async () => (await host.page.locator(`${t("queue-item")}[data-status="queued"]`).count()) > 0,
+        20000,
       );
-      await host.page.click(t("add-video-submit"));
+      await host.page.locator(t("queue-play")).first().click();
       const switched = await waitFor(
         async () => {
           const s = await state(host.page);
@@ -561,6 +565,92 @@ const SCENARIOS = {
       const [h, f] = [await state(host.page), await state(friend.page)];
       check(h.paused && f.paused, `комната сама поехала после ожидания: ${JSON.stringify({ h, f })}`);
       return "нажал «пауза» во время ожидания — комната осталась на паузе";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // Queue: order, hand-over by itself when a video ends (waiting for everybody's first seconds),
+  // remove, skip. Short clips so the whole thing runs in a minute.
+  async "queue-add-order-advance"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const url = await createRoomAsHost(host.page);
+      await addVideo(host.page, FLOWER);
+      const friend = await newViewer(b);
+      await joinAsGuest(friend.page, url, "Друг");
+
+      for (const u of [BBB_360, BBB_720]) {
+        await host.page.fill(t("queue-add-input"), u);
+        await host.page.click(t("queue-add-submit"));
+        await sleep(600);
+      }
+      const queued = () => host.page.locator(`${t("queue-item")}[data-status="queued"]`);
+      check(await waitFor(async () => (await queued().count()) === 2, 20000), "в очереди не два видео");
+      const titles = await queued().evaluateAll((els) => els.map((e) => e.getAttribute("data-title")));
+      check(/360/.test(titles[0]) && /720/.test(titles[1]), `порядок очереди неверный: ${titles}`);
+      check(
+        await waitFor(async () => (await friend.page.locator(t("queue-item")).count()) === 3, 15000),
+        "друг не видит очередь",
+      );
+
+      // Play the 5-second clip to the end: the room must move on to the 360p clip and start it by itself.
+      await host.page.click(t("play-toggle"));
+      const playingTitle = async () =>
+        (await host.page.locator(`${t("queue-item")}[data-status="playing"]`).getAttribute("data-title")) ?? "";
+      check(
+        await waitFor(async () => /360/.test(await playingTitle()), 60000),
+        "после конца первого видео комната не перешла ко второму",
+      );
+      const autoStarted = await waitFor(async () => {
+        const [h, f] = [await state(host.page), await state(friend.page)];
+        return h && f && !h.paused && !f.paused && h.t > 0.5 && f.t > 0.5 && h.dur > 0 && h.dur < 30;
+      }, 45000);
+      check(autoStarted, "следующее видео не запустилось само");
+
+      // Remove the remaining queued one, then add another and skip to it.
+      await host.page.locator(t("queue-remove")).first().click();
+      check(await waitFor(async () => (await queued().count()) === 0, 15000), "видео не убралось из очереди");
+      await host.page.fill(t("queue-add-input"), BBB_1080);
+      await host.page.click(t("queue-add-submit"));
+      check(await waitFor(async () => (await queued().count()) === 1, 15000), "новое видео не встало в очередь");
+      await host.page.click(t("queue-next"));
+      check(await waitFor(async () => /1080/.test(await playingTitle()), 30000), "«Следующее» не переключило на 1080");
+      return "порядок, автопереход с автозапуском, удаление и «Следующее» работают";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // Nobody can start the film until the first seconds are on the device.
+  async "startup-gate"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      await createRoomAsHost(host.page);
+      let hold = true;
+      await host.page.route("**/video/proxy/**", async (route) => {
+        if (hold && /\.(ts|m4s)(\?|$)/.test(route.request().url())) await sleep(9000);
+        return route.continue().catch(() => {});
+      });
+      await addVideo(host.page, BBB_720);
+      check((await host.page.locator(t("startup-gate")).count()) > 0, "нет надписи «Загружаем первые секунды…»");
+      check(
+        await host.page.locator(t("play-toggle")).isDisabled(),
+        "кнопка «Смотреть» доступна, пока ничего не загружено",
+      );
+      hold = false;
+      check(
+        await waitFor(async () => (await host.page.locator(t("startup-gate")).count()) === 0, 40000),
+        "ограничение не снялось после загрузки",
+      );
+      check(!(await host.page.locator(t("play-toggle")).isDisabled()), "кнопка осталась недоступной");
+      await host.page.click(t("play-toggle"));
+      await sleep(3000);
+      const s = await state(host.page);
+      check(!s.paused && s.t > 0.5, `не запустилось: ${JSON.stringify(s)}`);
+      return "до загрузки старт недоступен, после — работает";
     } finally {
       await b.close();
     }

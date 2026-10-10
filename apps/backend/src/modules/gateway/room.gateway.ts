@@ -13,6 +13,7 @@ import {
 import {
   type PauseEvent,
   type PlayEvent,
+  type QueueItemDto,
   type SeekEvent,
   SendChatMessageSchema,
   SocketEvents,
@@ -31,6 +32,8 @@ import { StallService } from "./stall.service";
 // Overridable so tests can make the heartbeat fire constantly and flush out races with pause/seek.
 const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS ?? 7000);
 const HEARTBEAT_LOCK_TTL_SEC = 5;
+// How long a video hand-over waits for slow viewers before the room starts anyway.
+const AUTOPLAY_WAIT_MS = 15_000;
 
 interface SocketData {
   userId: string;
@@ -52,6 +55,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
 
   private readonly instanceId = randomUUID();
   private readonly localActiveRooms = new Set<string>();
+  private endedHandler?: (roomId: string, assetId: string) => Promise<void>;
 
   constructor(
     private readonly jwt: JwtService,
@@ -92,6 +96,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     for (const roomId of this.localActiveRooms) {
       // Expired stall entries must not freeze a room forever.
       if (await this.stall.isAutoPaused(roomId)) await this.settleStall(roomId, "system");
+      await this.maybeAutoplay(roomId);
       const state = await this.playbackState.get(roomId);
       if (state.status !== "playing") continue;
 
@@ -159,6 +164,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const stamped = stampWithServerTime(body);
     await this.stall.clearAutoPaused(body.roomId); // a person decided: the system hold no longer applies
+    await this.stall.clearAutoplay(body.roomId);
     const next = await this.playbackState.set(body.roomId, {
       status: "playing",
       positionSec: body.positionSec,
@@ -272,6 +278,69 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     const row = await this.chat.post(body.roomId, userId, parsed.data.body);
     this.server.to(body.roomId).emit(SocketEvents.ChatMessage, toChatMessageDto(row));
+  }
+
+  // The room's queue changed (something added, removed, reordered or the current video moved on).
+  broadcastQueue(roomId: string, items: QueueItemDto[]): void {
+    this.server.to(roomId).emit(SocketEvents.QueueUpdated, { roomId, items });
+  }
+
+  // VideoService registers itself here: the gateway cannot import it (cycle), but it must be able to
+  // say "the current video ended".
+  setEndedHandler(handler: (roomId: string, assetId: string) => Promise<void>): void {
+    this.endedHandler = handler;
+  }
+
+  async claimAdvance(roomId: string, itemId: string): Promise<boolean> {
+    return this.stall.claimOnce(`advance:${roomId}:${itemId}`, 60);
+  }
+
+  // After one video hands over to the next the room waits (at most 15 s) until everybody online has
+  // the first seconds buffered, then starts by itself — nobody should miss the opening.
+  async armAutoplay(roomId: string, assetId: string): Promise<void> {
+    const state = await this.playbackState.get(roomId);
+    await this.stall.armAutoplay(roomId, {
+      assetId,
+      deadlineMs: Date.now() + AUTOPLAY_WAIT_MS,
+      version: state.version,
+    });
+    setTimeout(() => void this.maybeAutoplay(roomId), AUTOPLAY_WAIT_MS + 500);
+  }
+
+  private async maybeAutoplay(roomId: string): Promise<void> {
+    const plan = await this.stall.getAutoplay(roomId);
+    if (!plan) return;
+    const online = new Set((await this.presence.listMembers(roomId)).map((m) => m.userId));
+    const ready = await this.stall.readyUsers(roomId, plan.assetId);
+    const everyoneReady = online.size > 0 && [...online].every((id) => ready.has(id));
+    if (!everyoneReady && Date.now() < plan.deadlineMs) return;
+    if (!(await this.stall.takeAutoplay(roomId))) return; // someone else already started it
+    const state = await this.playbackState.get(roomId);
+    // Only if nobody has touched the room since the switch.
+    if (state.version !== plan.version || state.status !== "paused") return;
+    const now = Date.now();
+    const next = await this.playbackState.set(roomId, { status: "playing", positionSec: 0, updatedAtMs: now });
+    this.server.to(roomId).emit(SocketEvents.PlayerPlay, {
+      positionSec: 0,
+      originTimestampMs: now,
+      byUserId: "00000000-0000-0000-0000-000000000000",
+      version: next.version,
+    });
+  }
+
+  @SubscribeMessage(SocketEvents.PlayerReady)
+  async onReady(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; assetId: string }) {
+    const userId = (socket.data as SocketData).userId;
+    if (!(await this.rooms.isMember(body.roomId, userId))) return;
+    await this.stall.markReady(body.roomId, body.assetId, userId);
+    await this.maybeAutoplay(body.roomId);
+  }
+
+  @SubscribeMessage(SocketEvents.PlayerEnded)
+  async onEnded(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; assetId: string }) {
+    const userId = (socket.data as SocketData).userId;
+    if (!(await this.rooms.isMember(body.roomId, userId))) return;
+    await this.endedHandler?.(body.roomId, body.assetId);
   }
 
   // A different video starts at 0:00, stopped, with nobody being waited for — never at the place the

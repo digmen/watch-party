@@ -7,10 +7,15 @@ export type RoomVisibility = z.infer<typeof RoomVisibilitySchema>;
 // harmless for argon2) and never trimmed — whitespace can be part of a password.
 export const RoomPasswordSchema = z.string().min(1).max(72);
 
+export const QueueAddPolicySchema = z.enum(["everyone", "owner"]);
+export type QueueAddPolicy = z.infer<typeof QueueAddPolicySchema>;
+
 export const CreateRoomSchema = z.object({
   name: z.string().min(1).max(80),
   visibility: RoomVisibilitySchema.default("private"),
   password: RoomPasswordSchema.optional(),
+  // Defaults on the server: "owner" for public rooms, "everyone" for link-only ones.
+  queueAddPolicy: QueueAddPolicySchema.optional(),
 });
 export type CreateRoomDto = z.input<typeof CreateRoomSchema>;
 
@@ -19,6 +24,7 @@ export const UpdateRoomSchema = z.object({
   name: z.string().min(1).max(80).optional(),
   visibility: RoomVisibilitySchema.optional(),
   password: RoomPasswordSchema.nullable().optional(),
+  queueAddPolicy: QueueAddPolicySchema.optional(),
 });
 export type UpdateRoomDto = z.infer<typeof UpdateRoomSchema>;
 
@@ -42,6 +48,7 @@ export const RoomSchema = z.object({
   isActive: z.boolean(),
   visibility: RoomVisibilitySchema,
   hasPassword: z.boolean(),
+  queueAddPolicy: QueueAddPolicySchema,
   createdAt: z.string().datetime(),
   members: z.array(RoomMemberSchema),
 });

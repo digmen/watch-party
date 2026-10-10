@@ -5,6 +5,7 @@ import VideoPlayer from "../VideoPlayer.vue";
 
 const props = defineProps<{
   src: string;
+  assetId: string;
   playing: boolean;
   positionSec: number;
   waitingFor: string[];
@@ -16,6 +17,8 @@ const emit = defineEmits<{
   seek: [sec: number];
   stall: [stalled: boolean];
   send: [text: string];
+  ready: [assetId: string];
+  ended: [];
 }>();
 
 const stage = ref<HTMLElement | null>(null);
@@ -25,6 +28,18 @@ const volume = ref(1);
 const muted = ref(false);
 const dragSec = ref<number | null>(null);
 const unsupported = ref(false);
+// The first seconds are not on the device yet: nobody can start the film (and the room is told, so a
+// hand-over to the next video can wait for everybody).
+const bufferReady = ref(false);
+const gated = computed(() => !bufferReady.value && !props.playing);
+function onReady(ready: boolean) {
+  bufferReady.value = ready;
+  if (ready) emit("ready", props.assetId);
+}
+function requestToggle() {
+  if (gated.value) return;
+  emit("toggle");
+}
 
 // Controls live on top of the picture and fade out while playing, like every real player.
 const controlsVisible = ref(true);
@@ -89,7 +104,7 @@ function onVideoClick() {
   if (clickTimer) return;
   clickTimer = setTimeout(() => {
     clickTimer = null;
-    emit("toggle");
+    requestToggle();
   }, 250);
 }
 function onDoubleClick(event: MouseEvent) {
@@ -161,6 +176,8 @@ defineExpose({
       :src="src"
       :want-playing="playing"
       @toggle="onVideoClick"
+      @ready="onReady"
+      @ended="emit('ended')"
       @stall="emit('stall', $event)"
       @unsupported="unsupported = true"
     />
@@ -174,7 +191,12 @@ defineExpose({
       <span>Подгружаем кадры у: {{ waitingFor.join(", ") }}</span>
     </div>
 
-    <button v-if="!playing && waitingFor.length === 0" class="big-play" aria-label="Смотреть" @click="emit('toggle')">▶</button>
+    <div v-if="gated" class="gate" data-testid="startup-gate" role="status">
+      <span class="spinner" aria-hidden="true"></span>
+      <span>Загружаем первые секунды…</span>
+    </div>
+
+    <button v-else-if="!playing && waitingFor.length === 0" class="big-play" aria-label="Смотреть" @click="requestToggle">▶</button>
 
     <div v-if="title" class="title">{{ title }}</div>
 
@@ -190,7 +212,13 @@ defineExpose({
     </div>
 
     <div class="controls" @pointerdown.stop>
-      <button class="icon" data-testid="play-toggle" :aria-label="playing ? 'Пауза' : 'Смотреть'" @click="emit('toggle')">
+      <button
+        class="icon"
+        data-testid="play-toggle"
+        :disabled="gated"
+        :aria-label="playing ? 'Пауза' : 'Смотреть'"
+        @click="requestToggle"
+      >
         {{ playing ? "❚❚" : "▶" }}
       </button>
       <span class="time">{{ fmt(dragSec ?? positionSec) }}</span>
@@ -259,6 +287,21 @@ defineExpose({
   text-align: center;
   background: rgb(10 13 18 / 0.92);
   z-index: 5;
+}
+.gate {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: fit-content;
+  height: fit-content;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-full);
+  background: rgb(10 13 18 / 0.85);
+  font-size: var(--text-sm);
+  z-index: 3;
 }
 .big-play {
   position: absolute;

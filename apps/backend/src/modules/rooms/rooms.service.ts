@@ -40,12 +40,23 @@ export class RoomsService {
   async create(
     ownerId: string,
     name: string,
-    options: { visibility?: "public" | "private"; password?: string } = {},
+    options: {
+      visibility?: "public" | "private";
+      password?: string;
+      queueAddPolicy?: "everyone" | "owner";
+    } = {},
   ): Promise<Room> {
     const passwordHash = options.password ? await Bun.password.hash(options.password, { algorithm: "argon2id" }) : null;
     const [room] = await this.db
       .insert(rooms)
-      .values({ name, ownerId, visibility: options.visibility ?? "private", passwordHash })
+      .values({
+        name,
+        ownerId,
+        visibility: options.visibility ?? "private",
+        passwordHash,
+        // A public room is open to strangers, so by default only its owner feeds the queue.
+        queueAddPolicy: options.queueAddPolicy ?? (options.visibility === "public" ? "owner" : "everyone"),
+      })
       .returning();
     await this.db.insert(roomMembers).values({ roomId: room.id, userId: ownerId, role: "owner" });
     return room;
@@ -110,13 +121,19 @@ export class RoomsService {
   async update(
     roomId: string,
     ownerId: string,
-    patch: { name?: string; visibility?: "public" | "private"; password?: string | null },
+    patch: {
+      name?: string;
+      visibility?: "public" | "private";
+      password?: string | null;
+      queueAddPolicy?: "everyone" | "owner";
+    },
   ): Promise<Room> {
     const room = await this.findById(roomId);
     if (room.ownerId !== ownerId) throw new ForbiddenException("Менять комнату может только её хозяин");
     const set: Partial<Room> = {};
     if (patch.name !== undefined) set.name = patch.name;
     if (patch.visibility !== undefined) set.visibility = patch.visibility;
+    if (patch.queueAddPolicy !== undefined) set.queueAddPolicy = patch.queueAddPolicy;
     if (patch.password === null) set.passwordHash = null;
     else if (patch.password !== undefined) {
       set.passwordHash = await Bun.password.hash(patch.password, { algorithm: "argon2id" });

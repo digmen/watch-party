@@ -4,7 +4,7 @@ import Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
 
 const props = defineProps<{ src: string; wantPlaying: boolean }>();
-const emit = defineEmits<{ toggle: []; stall: [stalled: boolean]; unsupported: [] }>();
+const emit = defineEmits<{ toggle: []; stall: [stalled: boolean]; unsupported: []; ready: [ready: boolean]; ended: [] }>();
 const videoEl = ref<HTMLVideoElement | null>(null);
 let hls: Hls | null = null;
 
@@ -55,6 +55,10 @@ function attach(src: string) {
 // holds the whole room paused while anyone is stalled, so nobody sees time run on a frozen frame.
 const STALL_BELOW_SEC = 0.4;
 const RECOVER_ABOVE_SEC = 4;
+// Before anybody presses play there should be a few seconds on the device, otherwise the first
+// moments stutter or play without sound/picture while the rest is still arriving.
+const START_BUFFER_SEC = 5;
+let readyReported = false;
 let stalledReported = false;
 let hasPlayed = false;
 let stallTimer: ReturnType<typeof setInterval> | null = null;
@@ -72,6 +76,13 @@ function checkStall() {
   if (!el) return;
   if (!el.paused && el.readyState >= 3 && el.currentTime > 0) hasPlayed = true;
   const ahead = secondsBuffered(el);
+  if (!readyReported && el.readyState >= 3) {
+    const remaining = el.duration > 0 ? el.duration - el.currentTime : Number.POSITIVE_INFINITY;
+    if (ahead >= START_BUFFER_SEC || ahead >= remaining - 0.3) {
+      readyReported = true;
+      emit("ready", true);
+    }
+  }
   const finished = el.duration > 0 && el.currentTime >= el.duration - 1.2 && !hlsStillGrowing();
 
   if (!stalledReported) {
@@ -94,18 +105,26 @@ function hlsStillGrowing(): boolean {
   return live === true;
 }
 
+function onEnded() {
+  emit("ended");
+}
+
 onMounted(() => {
   attach(props.src);
+  videoEl.value?.addEventListener("ended", onEnded);
   stallTimer = setInterval(checkStall, 400);
 });
 watch(
   () => props.src,
   (next) => {
     hasPlayed = false;
+    readyReported = false;
+    emit("ready", false);
     attach(next);
   },
 );
 onUnmounted(() => {
+  videoEl.value?.removeEventListener("ended", onEnded);
   if (stallTimer) clearInterval(stallTimer);
   if (stalledReported) emit("stall", false);
   hls?.destroy();

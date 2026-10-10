@@ -15,6 +15,12 @@ export const rooms = pgTable("rooms", {
   visibility: text("visibility", { enum: ROOM_VISIBILITIES }).notNull().default("private"),
   // Argon2id hash of the optional room password; null = no password.
   passwordHash: text("password_hash"),
+  // Who may put videos in the queue: every participant, or only the owner.
+  queueAddPolicy: text("queue_add_policy", { enum: ["everyone", "owner"] })
+    .notNull()
+    .default("everyone"),
+  // Last time anything happened in the room (join, chat, playback, queue). Rooms idle for a day are removed.
+  lastActiveAt: timestamp("last_active_at", { withTimezone: true }).notNull().defaultNow(),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

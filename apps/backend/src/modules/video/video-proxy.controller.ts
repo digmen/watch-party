@@ -46,9 +46,15 @@ export class VideoProxyController {
   // fetches `sourceUrl` itself, anonymous hosts also get a hard per-guest hourly ceiling; real
   // accounts are not limited here.
   private async assertMayAddVideo(roomId: string, user: AuthenticatedUser): Promise<void> {
-    if (!user.isGuest) return;
     const room = await this.rooms.findById(roomId);
-    if (room.ownerId !== user.sub) throw new ForbiddenException("Видео в этой комнате добавляет только её хозяин");
+    const isOwner = room.ownerId === user.sub;
+    // The owner picks who may fill the queue: everybody in the room, or only themselves.
+    if (!isOwner && room.queueAddPolicy === "owner") {
+      throw new ForbiddenException("В этой комнате видео добавляет только хозяин");
+    }
+    // The server downloads whatever link it is given, so anonymous guests get an hourly ceiling;
+    // registered accounts are not limited.
+    if (!user.isGuest) return;
     const key = `video:add:guest:${user.sub}`;
     const count = await this.redis.incr(key);
     if (count === 1) await this.redis.expire(key, 3600);
@@ -86,8 +92,8 @@ export class VideoProxyController {
   async addVideo(@Param("roomId") roomId: string, @Body() dto: AddVideoDto, @CurrentUser() user: AuthenticatedUser) {
     await this.assertMember(roomId, user.sub);
     await this.assertMayAddVideo(roomId, user);
-    const asset = await this.videos.addVideoToRoom(roomId, dto.sourceUrl, user.sub);
-    return { video: toVideoAssetDto(asset) };
+    const { asset, becameCurrent } = await this.videos.addVideoToRoom(roomId, dto.sourceUrl, user.sub);
+    return { video: toVideoAssetDto(asset), becameCurrent };
   }
 
   // Also member-gated: this hands out the asset UUID, which is the only thing standing between a

@@ -61,9 +61,50 @@ export class StallService {
     return value === null ? null : Number(value);
   }
 
-  // A new video starts clean: nobody is being waited for, no pending auto-resume.
+  // A new video starts clean: nobody is being waited for, no pending auto-resume or auto-start.
   async clearAll(roomId: string): Promise<void> {
-    await this.redis.del(this.stallKey(roomId), this.autoPausedKey(roomId));
+    await this.redis.del(this.stallKey(roomId), this.autoPausedKey(roomId), this.autoplayKey(roomId));
+  }
+
+  private autoplayKey(roomId: string): string {
+    return `room:${roomId}:autoplay`;
+  }
+
+  private readyKey(roomId: string, assetId: string): string {
+    return `room:${roomId}:ready:${assetId}`;
+  }
+
+  // "Start by yourself once everyone has the first seconds" — armed when one video follows another.
+  async armAutoplay(roomId: string, plan: { assetId: string; deadlineMs: number; version: number }): Promise<void> {
+    await this.redis.set(this.autoplayKey(roomId), JSON.stringify(plan), "EX", 120);
+  }
+
+  async getAutoplay(roomId: string): Promise<{ assetId: string; deadlineMs: number; version: number } | null> {
+    const raw = await this.redis.get(this.autoplayKey(roomId));
+    return raw ? JSON.parse(raw) : null;
+  }
+
+  // Single-use: whoever deletes the key is the one that starts the room.
+  async takeAutoplay(roomId: string): Promise<boolean> {
+    return (await this.redis.del(this.autoplayKey(roomId))) === 1;
+  }
+
+  async clearAutoplay(roomId: string): Promise<void> {
+    await this.redis.del(this.autoplayKey(roomId));
+  }
+
+  async markReady(roomId: string, assetId: string, userId: string): Promise<void> {
+    await this.redis.sadd(this.readyKey(roomId, assetId), userId);
+    await this.redis.expire(this.readyKey(roomId, assetId), 600);
+  }
+
+  async readyUsers(roomId: string, assetId: string): Promise<Set<string>> {
+    return new Set(await this.redis.smembers(this.readyKey(roomId, assetId)));
+  }
+
+  // True for exactly one caller per key within the TTL.
+  async claimOnce(key: string, ttlSec: number): Promise<boolean> {
+    return (await this.redis.set(`once:${key}`, "1", "EX", ttlSec, "NX")) === "OK";
   }
 
   async isAutoPaused(roomId: string): Promise<boolean> {

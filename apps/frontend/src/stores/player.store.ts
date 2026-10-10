@@ -1,5 +1,13 @@
-import type { PauseEvent, PlayEvent, PresenceUpdate, SeekEvent, VideoAssetDto } from "@watch-party/shared";
+import type {
+  PauseEvent,
+  PlayEvent,
+  PresenceUpdate,
+  QueueItemDto,
+  SeekEvent,
+  VideoAssetDto,
+} from "@watch-party/shared";
 import { defineStore } from "pinia";
+import { queueApi } from "../api/queue.api";
 import { expectedPosition, isNewerVersion, type RoomPlaybackState } from "../ws/clock-sync";
 import { roomSocket } from "../ws/room-socket";
 
@@ -13,6 +21,8 @@ interface PlayerState {
   members: PresenceMember[];
   // Names of people whose picture is still loading — the whole room is held until they catch up.
   waitingFor: string[];
+  // The room's video queue: the current video first, then what is lined up.
+  queue: QueueItemDto[];
   playback: RoomPlaybackState;
 }
 
@@ -21,6 +31,7 @@ export const usePlayerStore = defineStore("player", {
     roomId: null,
     members: [],
     waitingFor: [],
+    queue: [],
     playback: { status: "paused", positionSec: 0, updatedAtMs: 0, version: 0 },
   }),
 
@@ -39,6 +50,9 @@ export const usePlayerStore = defineStore("player", {
 
       roomSocket.onPresence((event: PresenceUpdate) => {
         if (event.roomId === this.roomId) this.members = event.members;
+      });
+      roomSocket.onQueueUpdated((event) => {
+        if (event.roomId === this.roomId) this.queue = event.items;
       });
       roomSocket.onRoomStall((event) => {
         if (event.roomId === this.roomId) this.waitingFor = event.waitingFor;
@@ -62,10 +76,29 @@ export const usePlayerStore = defineStore("player", {
       roomSocket.onReconnect((state) => {
         if (state) this.playback = state.playback;
         this.waitingFor = [];
+        void this.loadQueue();
       });
 
       const result = await roomSocket.joinRoom(roomId);
       if ("playback" in result) this.playback = result.playback;
+      await this.loadQueue();
+    },
+
+    async loadQueue() {
+      if (!this.roomId) return;
+      try {
+        this.queue = (await queueApi.list(this.roomId)).items;
+      } catch {
+        // The next queue:updated event or reconnect refreshes it; the list is not worth an error.
+      }
+    },
+
+    reportReady(assetId: string) {
+      if (this.roomId) roomSocket.emitReady(this.roomId, assetId);
+    },
+
+    reportEnded(assetId: string) {
+      if (this.roomId) roomSocket.emitEnded(this.roomId, assetId);
     },
 
     // Must be called after enterRoom: the socket doesn't exist until then, and roomSocket's
@@ -126,6 +159,7 @@ export const usePlayerStore = defineStore("player", {
       this.roomId = null;
       this.members = [];
       this.waitingFor = [];
+      this.queue = [];
     },
   },
 });

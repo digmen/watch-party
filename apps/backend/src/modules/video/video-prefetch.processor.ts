@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
 import { roomVideos, videoAssets } from "../../database/schema";
 import { RoomGateway } from "../gateway/room.gateway";
+import { RoomQueueService } from "./room-queue.service";
 import { toVideoAssetDto } from "./video.presenter";
 import { READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import { type ResolvedPlayback, VideoResolverService } from "./video-resolver.service";
@@ -39,6 +40,7 @@ export class VideoPrefetchProcessor extends WorkerHost {
     private readonly cache: VideoCacheService,
     private readonly resolver: VideoResolverService,
     private readonly gateway: RoomGateway,
+    private readonly roomQueue: RoomQueueService,
   ) {
     super();
   }
@@ -56,7 +58,13 @@ export class VideoPrefetchProcessor extends WorkerHost {
       .where(eq(roomVideos.videoAssetId, assetId));
 
     const dto = toVideoAssetDto(asset);
-    for (const { roomId } of rooms) this.gateway.broadcastVideoChanged(roomId, dto);
+    for (const { roomId } of rooms) {
+      // Only a room whose CURRENT video this is switches to it; a queued video that has just finished
+      // downloading must not replace what people are watching — the queue list just gets fresher.
+      const current = await this.roomQueue.current(roomId);
+      if (current?.asset.id === assetId) this.gateway.broadcastVideoChanged(roomId, dto);
+      this.gateway.broadcastQueue(roomId, await this.roomQueue.list(roomId));
+    }
   }
 
   // BullMQ removes a job once it finishes, so these listeners are the only chance to record a

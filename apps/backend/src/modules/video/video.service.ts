@@ -1,10 +1,11 @@
 import { InjectQueue } from "@nestjs/bullmq";
 import { Inject, Injectable, Logger, NotFoundException, type OnModuleInit } from "@nestjs/common";
 import { Queue } from "bullmq";
-import { desc, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
 import { roomVideos, type VideoAsset, videoAssets } from "../../database/schema";
 import { RoomGateway } from "../gateway/room.gateway";
+import { RoomQueueService } from "./room-queue.service";
 import { toVideoAssetDto } from "./video.presenter";
 import { hashUrl, READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import type { PrefetchJobData } from "./video-prefetch.processor";
@@ -42,6 +43,7 @@ export class VideoService implements OnModuleInit {
     private readonly resolver: VideoResolverService,
     private readonly cache: VideoCacheService,
     private readonly gateway: RoomGateway,
+    private readonly roomQueue: RoomQueueService,
     @InjectQueue("video-prefetch") private readonly queue: Queue<PrefetchJobData>,
   ) {}
 
@@ -51,6 +53,9 @@ export class VideoService implements OnModuleInit {
   // and the UI hides the input while processing. Reconciling at boot is what makes that
   // self-healing instead of permanent.
   async onModuleInit(): Promise<void> {
+    // The gateway cannot import this service (it would be a cycle), so it calls back through a hook.
+    this.gateway.setEndedHandler((roomId, assetId) => this.onVideoEnded(roomId, assetId));
+
     // Playable-while-downloading videos: if the download died with the process, close the playlist
     // so the video ends where it was cut instead of waiting forever for segments that never come.
     const playable = await this.db.select().from(videoAssets).where(eq(videoAssets.status, "ready"));
@@ -91,7 +96,11 @@ export class VideoService implements OnModuleInit {
     this.logger.warn(`released ${orphaned.length} video asset(s) stranded mid-processing by a restart`);
   }
 
-  async addVideoToRoom(roomId: string, sourceUrl: string, userId: string): Promise<VideoAsset> {
+  async addVideoToRoom(
+    roomId: string,
+    sourceUrl: string,
+    userId: string,
+  ): Promise<{ asset: VideoAsset; becameCurrent: boolean }> {
     const sourceUrlHash = hashUrl(sourceUrl);
     let [asset] = await this.db.select().from(videoAssets).where(eq(videoAssets.sourceUrlHash, sourceUrlHash)).limit(1);
 
@@ -152,13 +161,61 @@ export class VideoService implements OnModuleInit {
       }
     }
 
-    await this.db.insert(roomVideos).values({ roomId, videoAssetId: asset.id, addedBy: userId });
-    // The new film starts from 0:00, stopped — not from wherever the previous one was.
+    const { becameCurrent } = await this.roomQueue.enqueue(roomId, asset.id, userId);
+    if (becameCurrent) {
+      // Nothing was playing: this becomes the current video. It starts from 0:00, stopped — not from
+      // wherever a previous film happened to be — and everyone switches to it at once (even while it
+      // is still `pending`, so their screen says "preparing" instead of showing the old picture).
+      await this.gateway.resetPlayback(roomId);
+      this.gateway.broadcastVideoChanged(roomId, toVideoAssetDto(asset));
+    }
+    await this.broadcastQueue(roomId);
+    return { asset, becameCurrent };
+  }
+
+  async broadcastQueue(roomId: string): Promise<void> {
+    this.gateway.broadcastQueue(roomId, await this.roomQueue.list(roomId));
+  }
+
+  // Switch the room to a different current video: reset to 0:00 (stopped), announce it, refresh the
+  // queue. With `autoplay` the room starts by itself once everybody has the first seconds buffered
+  // (used when one video ends and the next follows); otherwise someone presses play.
+  private async switchTo(roomId: string, asset: VideoAsset, autoplay: boolean): Promise<void> {
     await this.gateway.resetPlayback(roomId);
-    // Everyone already in the room switches to the new video immediately — including the case
-    // where it's still `pending`, so their UI shows "preparing" instead of the previous film.
     this.gateway.broadcastVideoChanged(roomId, toVideoAssetDto(asset));
-    return asset;
+    if (autoplay) await this.gateway.armAutoplay(roomId, asset.id);
+    await this.broadcastQueue(roomId);
+  }
+
+  async playNext(roomId: string, autoplay: boolean): Promise<boolean> {
+    const next = await this.roomQueue.advance(roomId);
+    if (!next) return false;
+    await this.switchTo(roomId, next.asset, autoplay);
+    return true;
+  }
+
+  async playNow(roomId: string, itemId: string): Promise<void> {
+    const current = await this.roomQueue.playNow(roomId, itemId);
+    await this.switchTo(roomId, current.asset, false);
+  }
+
+  async removeFromQueue(roomId: string, itemId: string, requesterId: string, isOwner: boolean): Promise<void> {
+    await this.roomQueue.remove(roomId, itemId, requesterId, isOwner);
+    await this.broadcastQueue(roomId);
+  }
+
+  async reorderQueue(roomId: string, order: string[]): Promise<void> {
+    await this.roomQueue.reorder(roomId, order);
+    await this.broadcastQueue(roomId);
+  }
+
+  // A client reports that the current video reached its end. Several viewers report at the same moment;
+  // the lock lets exactly one of them move the room on.
+  private async onVideoEnded(roomId: string, assetId: string): Promise<void> {
+    const current = await this.roomQueue.current(roomId);
+    if (!current || current.asset.id !== assetId) return; // stale report about a video that is no longer current
+    if (!(await this.gateway.claimAdvance(roomId, current.item.id))) return;
+    await this.playNext(roomId, true);
   }
 
   // Which rooms currently show this asset — used by the prefetch worker to announce readiness.
@@ -170,18 +227,9 @@ export class VideoService implements OnModuleInit {
     return rows.map((r) => r.roomId);
   }
 
-  // MVP simplification: rooms don't have a real playback queue yet — the frontend just treats
-  // the most recently added video as "the" current one. A `queuePosition`-driven playlist is a
-  // straightforward extension of `room_videos` later, not a schema change.
+  // The room's current video: the "playing" queue item.
   async getLatestForRoom(roomId: string): Promise<VideoAsset | undefined> {
-    const [row] = await this.db
-      .select({ asset: videoAssets })
-      .from(roomVideos)
-      .innerJoin(videoAssets, eq(roomVideos.videoAssetId, videoAssets.id))
-      .where(eq(roomVideos.roomId, roomId))
-      .orderBy(desc(roomVideos.createdAt))
-      .limit(1);
-    return row?.asset;
+    return (await this.roomQueue.current(roomId))?.asset;
   }
 
   async getAsset(assetId: string): Promise<VideoAsset> {

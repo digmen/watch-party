@@ -10,6 +10,7 @@ export function toRoomDto(room: Room, members: RoomMemberRow[]): RoomDto {
     isActive: room.isActive,
     visibility: room.visibility,
     hasPassword: room.passwordHash !== null,
+    queueAddPolicy: room.queueAddPolicy,
     createdAt: room.createdAt.toISOString(),
     members: members.map((m) => ({
       userId: m.userId,

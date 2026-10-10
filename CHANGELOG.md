@@ -6,6 +6,10 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- **Video queue**: a room has a current video plus an ordered queue (add by link, remove, reorder with arrows or drag, "play now", "next"). When a video ends the next one takes over by itself and starts once everybody has the first seconds (max 15 s wait). Owner chooses who may add: everyone or only themselves (default "only owner" for public rooms). API: `GET/DELETE /rooms/:id/queue`, `POST …/queue/next|reorder|:itemId/play`; socket `queue:updated`, `player:ready`, `player:ended`.
+- **Startup gate**: nobody can press play until ~5 s are buffered on their device ("Загружаем первые секунды…"); a queued video that finishes downloading no longer replaces the current one on screen.
+- Migration 0006: `room_videos.status`, `rooms.queue_add_policy`, `rooms.last_active_at`.
+
 - **Guests are no longer pinned to one room**: one browser can open many links; "Create room" always creates a new room (same visitor, repeating names); a duplicate display name in a room becomes "Name (2)" instead of an error; guests get "My rooms". Idempotency-Key on quick start protects against double submits only.
 - **New video starts at 0:00, stopped** (was: at the place the previous film stopped — a 3 h film then a 10 min one never started).
 - **Playback state is versioned**: heartbeat is re-read after the lock and carries the version, clients drop older events — a stale "playing" can no longer undo a pause. While the room is held for someone's missing frames the one button reads "pause" (it used to read ▶, so a click meant "play"), and a system hold never resumes a room that a person touched since. Single click on the picture waits 250 ms so a double click is just fullscreen.

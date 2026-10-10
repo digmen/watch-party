@@ -3,6 +3,8 @@ import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { GatewayModule } from "../gateway/gateway.module";
 import { RoomsModule } from "../rooms/rooms.module";
+import { RoomQueueController } from "./room-queue.controller";
+import { RoomQueueService } from "./room-queue.service";
 import { VideoService } from "./video.service";
 import { VideoCacheService } from "./video-cache.service";
 import { VideoCacheCleanupService } from "./video-cache-cleanup.service";
@@ -13,8 +15,9 @@ import { YtDlpUpdaterService } from "./ytdlp-updater.service";
 
 @Module({
   imports: [AuthModule, RoomsModule, GatewayModule, BullModule.registerQueue({ name: "video-prefetch" })],
-  controllers: [VideoProxyController],
+  controllers: [VideoProxyController, RoomQueueController],
   providers: [
+    RoomQueueService,
     VideoResolverService,
     VideoCacheService,
     VideoCacheCleanupService,

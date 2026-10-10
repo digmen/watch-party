@@ -127,6 +127,7 @@ export class GuestService {
           name: roomName ?? `Комната ${displayName}`,
           ownerId: created.id,
           visibility: options.visibility ?? "private",
+          queueAddPolicy: options.visibility === "public" ? "owner" : "everyone",
           passwordHash,
         })
         .returning();

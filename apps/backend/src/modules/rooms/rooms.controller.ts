@@ -13,7 +13,11 @@ export class RoomsController {
   @Post()
   async create(@Body() dto: CreateRoomDto, @CurrentUser() user: AuthenticatedUser) {
     await this.rooms.assertMayCreate(user.sub, user.isGuest);
-    const room = await this.rooms.create(user.sub, dto.name, { visibility: dto.visibility, password: dto.password });
+    const room = await this.rooms.create(user.sub, dto.name, {
+      visibility: dto.visibility,
+      password: dto.password,
+      queueAddPolicy: dto.queueAddPolicy,
+    });
     const members = await this.rooms.listMembers(room.id);
     return { room: toRoomDto(room, members) };
   }

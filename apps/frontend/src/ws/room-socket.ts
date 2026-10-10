@@ -4,6 +4,7 @@ import {
   type PauseEvent,
   type PlayEvent,
   type PresenceUpdate,
+  type QueueItemDto,
   type SeekEvent,
   SocketEvents,
   type VideoAssetDto,
@@ -20,6 +21,7 @@ type PresenceHandler = (event: PresenceUpdate) => void;
 type ChatHandler = (message: ChatMessageDto) => void;
 type VideoChangedHandler = (video: VideoAssetDto) => void;
 type RejoinResult = { playback: { status: "playing" | "paused"; positionSec: number; updatedAtMs: number } };
+type QueueHandler = (event: { roomId: string; items: QueueItemDto[] }) => void;
 type StallHandler = (event: { roomId: string; waitingFor: string[] }) => void;
 
 export class RoomSocket {
@@ -123,6 +125,18 @@ export class RoomSocket {
 
   emitSeek(event: SeekEvent & { roomId: string }): void {
     this.socket?.emit(SocketEvents.PlayerSeek, event);
+  }
+
+  emitReady(roomId: string, assetId: string): void {
+    this.socket?.emit(SocketEvents.PlayerReady, { roomId, assetId });
+  }
+
+  emitEnded(roomId: string, assetId: string): void {
+    this.socket?.emit(SocketEvents.PlayerEnded, { roomId, assetId });
+  }
+
+  onQueueUpdated(handler: QueueHandler): void {
+    this.socket?.on(SocketEvents.QueueUpdated, handler);
   }
 
   emitStall(roomId: string, stalled: boolean): void {

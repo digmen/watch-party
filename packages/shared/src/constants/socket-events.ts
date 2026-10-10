@@ -9,6 +9,11 @@ export const SocketEvents = {
   // Client -> server: "my buffer ran dry" / "my buffer is healthy again". The server pauses the whole
   // room while anyone is waiting for data and resumes it when everybody has frames again.
   PlayerStall: "player:stall",
+  // Client -> server: "the current video reached its end" / "I have the first seconds buffered".
+  PlayerEnded: "player:ended",
+  PlayerReady: "player:ready",
+  // Server -> clients: the room's video queue changed (add, remove, reorder, advance).
+  QueueUpdated: "queue:updated",
   // Server -> clients: who the room is currently waiting for (empty = nobody).
   RoomStall: "room:stall",
   TimeSync: "time:sync",

@@ -3,12 +3,14 @@ import type { RoomDto, VideoAssetDto } from "@watch-party/shared";
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { API_ORIGIN, ApiError } from "../api/client";
+import { queueApi } from "../api/queue.api";
 import { roomsApi } from "../api/rooms.api";
 import { videosApi } from "../api/videos.api";
 import GuestJoinPrompt from "../components/GuestJoinPrompt.vue";
 import AddVideoCard from "../components/room/AddVideoCard.vue";
 import ChatPanel, { type ChatNotice } from "../components/room/ChatPanel.vue";
 import PlayerStage from "../components/room/PlayerStage.vue";
+import QueuePanel from "../components/room/QueuePanel.vue";
 import RoomTopBar from "../components/room/RoomTopBar.vue";
 import { usePageSeo } from "../seo";
 import { humanize, useAuthStore } from "../stores/auth.store";
@@ -47,7 +49,8 @@ const roomOwnerId = ref<string | null>(null);
 const videoAsset = ref<VideoAssetDto | null>(null);
 const addingVideo = ref(false);
 const addVideoError = ref<string | null>(null);
-const changingVideo = ref(false);
+const queuePanel = ref<InstanceType<typeof QueuePanel> | null>(null);
+const queueError = ref<string | null>(null);
 const preparingSince = ref<number>(0);
 const preparingSeconds = ref(0);
 const displaySeconds = ref(0);
@@ -56,6 +59,7 @@ const displaySeconds = ref(0);
 const copied = ref(false);
 const settingsOpen = ref(false);
 const settingsVisibility = ref<"public" | "private">("private");
+const settingsQueuePolicy = ref<"everyone" | "owner">("everyone");
 const settingsPassword = ref("");
 const settingsSaving = ref(false);
 const settingsMessage = ref<string | null>(null);
@@ -70,16 +74,17 @@ const roomUrl = computed(() => `${window.location.origin}/rooms/${roomId}`);
 const isRoomOwner = computed(() => roomOwnerId.value !== null && roomOwnerId.value === auth.user?.id);
 // Invited guests watch what the host picked. A guest who *started* the room is its host and may
 // pick the video — the backend enforces the same rule on addVideo; this keeps the UI honest.
-const canManageVideo = computed(() => auth.isAuthenticated && (!auth.isGuest || isRoomOwner.value));
+// Who may add to the queue is the owner's call (room setting); the owner always may.
+const canAddVideo = computed(
+  () => auth.isAuthenticated && (isRoomOwner.value || roomInfo.value?.queueAddPolicy !== "owner"),
+);
 const isPlaying = computed(() => player.playback.status === "playing");
 // What the people in the room INTEND: while the room is held for someone's missing frames it is
 // "paused" on the server, but everyone's intent is still "playing" — and the one button must say
 // "pause" then. (It used to say ▶, so the host's click meant "play" and he could never stop it.)
 const intendsToPlay = computed(() => isPlaying.value || player.waitingFor.length > 0);
-const showAddVideo = computed(
-  () => canManageVideo.value && (changingVideo.value || !videoAsset.value || videoAsset.value.status === "failed"),
-);
-const alone = computed(() => player.members.length <= 1);
+// Nothing to watch yet (or the current video could not be prepared): the big "what do we watch" card.
+const showAddVideo = computed(() => canAddVideo.value && (!videoAsset.value || videoAsset.value.status === "failed"));const alone = computed(() => player.members.length <= 1);
 
 function fullPlaybackUrl(video: VideoAssetDto): string {
   return `${API_ORIGIN}${video.playbackUrl}`;
@@ -118,17 +123,35 @@ function trackAsset(video: VideoAssetDto | null) {
 async function submitVideo(sourceUrl: string) {
   addingVideo.value = true;
   addVideoError.value = null;
+  queueError.value = null;
   try {
-    const { video } = await videosApi.add(roomId, { sourceUrl });
-    changingVideo.value = false;
-    preparingSince.value = 0;
-    trackAsset(video);
+    const { video, becameCurrent } = await videosApi.add(roomId, { sourceUrl });
+    // A video that went to the queue must not replace what is on screen; only a new CURRENT one does.
+    if (becameCurrent) {
+      preparingSince.value = 0;
+      trackAsset(video);
+    }
   } catch (err) {
-    addVideoError.value = err instanceof Error && err.message ? err.message : "Не удалось добавить видео";
+    const message = err instanceof Error && err.message ? err.message : "Не удалось добавить видео";
+    addVideoError.value = message;
+    queueError.value = message;
   } finally {
     addingVideo.value = false;
   }
 }
+
+async function queueAction(action: () => Promise<unknown>) {
+  queueError.value = null;
+  try {
+    await action();
+  } catch (err) {
+    queueError.value = err instanceof Error && err.message ? err.message : "Не получилось";
+  }
+}
+const playQueueItem = (id: string) => queueAction(() => queueApi.playNow(roomId, id));
+const removeQueueItem = (id: string) => queueAction(() => queueApi.remove(roomId, id));
+const reorderQueue = (order: string[]) => queueAction(() => queueApi.reorder(roomId, order));
+const nextInQueue = () => queueAction(() => queueApi.next(roomId));
 
 async function copyRoomLink() {
   try {
@@ -152,13 +175,13 @@ async function enterRoom(password?: string) {
     roomOwnerId.value = joined.room.ownerId;
     roomInfo.value = joined.room;
     settingsVisibility.value = joined.room.visibility;
+    settingsQueuePolicy.value = joined.room.queueAddPolicy;
     passwordPrompt.value = false;
     await player.enterRoom(roomId);
     await chat.enterRoom(roomId);
 
     // Subscribed here rather than in setup(): the socket only exists once enterRoom has run.
     player.onVideoChanged((video) => {
-      changingVideo.value = false;
       preparingSince.value = 0;
       trackAsset(video);
     });
@@ -230,7 +253,10 @@ async function saveSettings() {
   settingsSaving.value = true;
   settingsMessage.value = null;
   try {
-    const dto: { visibility: "public" | "private"; password?: string | null } = { visibility: settingsVisibility.value };
+    const dto: { visibility: "public" | "private"; password?: string | null; queueAddPolicy: "everyone" | "owner" } = {
+      visibility: settingsVisibility.value,
+      queueAddPolicy: settingsQueuePolicy.value,
+    };
     if (settingsPassword.value) dto.password = settingsPassword.value;
     const { room } = await roomsApi.update(roomId, dto);
     roomInfo.value = room;
@@ -368,13 +394,13 @@ function leave() {
       :visibility="roomInfo?.visibility ?? 'private'"
       :has-password="roomInfo?.hasPassword ?? false"
       :members="player.members"
-      :can-manage="canManageVideo && videoAsset?.status === 'ready' && !changingVideo"
+      :can-manage="canAddVideo && !showAddVideo"
       :is-owner="isRoomOwner"
       :copied="copied"
       :back-label="auth.isGuest ? 'На главную' : 'К комнатам'"
       @back="leave"
       @copy="copyRoomLink"
-      @change-video="changingVideo = true"
+      @add-video="queuePanel?.focusInput()"
       @settings="settingsOpen = !settingsOpen"
     />
 
@@ -388,6 +414,17 @@ function leave() {
         <input v-model="settingsVisibility" type="radio" value="public" />
         <span><b>Публичная</b> Видна в списке публичных комнат.</span>
       </label>
+      <fieldset class="policy">
+        <legend>Кто добавляет видео в очередь</legend>
+        <label class="opt">
+          <input v-model="settingsQueuePolicy" type="radio" value="everyone" />
+          <span><b>Все в комнате</b> Любой участник может поставить видео в очередь.</span>
+        </label>
+        <label class="opt">
+          <input v-model="settingsQueuePolicy" type="radio" value="owner" />
+          <span><b>Только хозяин</b> Остальные только смотрят.</span>
+        </label>
+      </fieldset>
       <div class="pw-row">
         <input
           v-model="settingsPassword"
@@ -413,15 +450,15 @@ function leave() {
           :busy="addingVideo"
           :error="addVideoError ?? (videoAsset?.status === 'failed' ? videoAsset.failureReason : null)"
           :hero="!videoAsset || videoAsset.status === 'failed'"
-          :can-cancel="changingVideo"
+          :can-cancel="false"
           @submit="submitVideo"
-          @cancel="changingVideo = false"
         />
 
         <PlayerStage
           v-else-if="videoAsset?.status === 'ready'"
           ref="stageRef"
           :src="fullPlaybackUrl(videoAsset)"
+          :asset-id="videoAsset.id"
           :playing="intendsToPlay"
           :position-sec="displaySeconds"
           :waiting-for="player.waitingFor"
@@ -431,6 +468,24 @@ function leave() {
           @seek="seekTo"
           @stall="player.reportStall"
           @send="chat.send"
+          @ready="player.reportReady"
+          @ended="player.reportEnded(videoAsset.id)"
+        />
+
+        <QueuePanel
+          v-if="videoAsset"
+          ref="queuePanel"
+          :items="player.queue"
+          :can-add="canAddVideo"
+          :is-owner="isRoomOwner"
+          :self-id="auth.user?.id ?? null"
+          :busy="addingVideo"
+          :error="queueError"
+          @add="submitVideo"
+          @play="playQueueItem"
+          @remove="removeQueueItem"
+          @reorder="reorderQueue"
+          @next="nextInQueue"
         />
 
         <div v-else-if="videoAsset" class="preparing" role="status">
@@ -535,6 +590,18 @@ function leave() {
 .opt span {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
+}
+.policy {
+  border: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.policy legend {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-2);
 }
 .pw-row,
 .row {

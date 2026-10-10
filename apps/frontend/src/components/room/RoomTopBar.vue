@@ -12,7 +12,7 @@ const props = defineProps<{
   copied: boolean;
   backLabel: string;
 }>();
-const emit = defineEmits<{ back: []; copy: []; changeVideo: []; settings: [] }>();
+const emit = defineEmits<{ back: []; copy: []; addVideo: []; settings: [] }>();
 
 const PALETTE = ["#ff8a65", "#ffd54f", "#81c784", "#4dd0e1", "#7986cb", "#ba68c8", "#f06292", "#a1887f"];
 function colorFor(id: string): string {
@@ -51,7 +51,7 @@ const badge = computed(() => {
     </div>
 
     <div class="actions">
-      <button v-if="canManage" class="ghost" @click="emit('changeVideo')">Сменить видео</button>
+      <button v-if="canManage" class="ghost" data-testid="add-video-open" @click="emit('addVideo')">Добавить видео</button>
       <button v-if="isOwner" class="ghost icon" aria-label="Настройки комнаты" @click="emit('settings')">⚙</button>
       <button data-testid="copy-link" class="invite" @click="emit('copy')">{{ copied ? "✓ Скопировано" : "Пригласить" }}</button>
     </div>
