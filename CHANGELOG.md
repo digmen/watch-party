@@ -6,6 +6,9 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- Daily Postgres backup to Cloudflare R2 (`infra/scripts/backup.sh`, bucket `watchparty-backups`, 30-day lifecycle) and `infra/scripts/restore.sh` for moving to any host. Restore verified against a throwaway container.
+- Landing and About rewritten in plain language (no engineering jargon, no ad/paid-plan promises that do not exist), FAQ with FAQPage JSON-LD.
+
 - Guest can host: `POST /api/auth/guest/start` creates a guest and their own room in one call; the landing page now has a name-only "Смотреть сразу" form. Guest owners may add a video to their own room (owner-only, 10/hour per guest, enforced in `VideoProxyController`).
 - Google sign-in made live: callback moved out of the `/api` prefix to `/auth/google/callback` (the URI registered in Google Cloud), post-login redirect goes to `/rooms`.
 - 404 page and catch-all route; `/privacy` and `/terms` pages (required for the Google consent screen); footer links; absolute `Sitemap:` in robots.txt.

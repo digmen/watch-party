@@ -17,6 +17,8 @@ html {
 
 body {
   min-height: 100dvh;
+  /* Decorative glows may extend past the viewport; they must never create a horizontal scrollbar. */
+  overflow-x: clip;
   background: var(--color-bg);
   color: var(--color-text);
   font-family:
