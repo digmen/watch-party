@@ -143,7 +143,7 @@ defineExpose({ applyCorrection, setPlaying, getDuration, setVolume });
 
 <template>
   <!-- Native controls are off on purpose: its seek bar would move only this viewer and the room clock would snap them back. -->
-  <video ref="videoEl" class="video" playsinline @click="emit('toggle')"></video>
+  <video ref="videoEl" class="video" data-testid="video" playsinline @click="emit('toggle')"></video>
 </template>
 
 <style scoped>

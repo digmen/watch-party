@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import type { RoomDto, VideoAssetDto } from "@watch-party/shared";
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { API_ORIGIN, ApiError } from "../api/client";
 import { roomsApi } from "../api/rooms.api";
 import { videosApi } from "../api/videos.api";
 import GuestJoinPrompt from "../components/GuestJoinPrompt.vue";
-import VideoPlayer from "../components/VideoPlayer.vue";
+import AddVideoCard from "../components/room/AddVideoCard.vue";
+import ChatPanel, { type ChatNotice } from "../components/room/ChatPanel.vue";
+import PlayerStage from "../components/room/PlayerStage.vue";
+import RoomTopBar from "../components/room/RoomTopBar.vue";
 import { usePageSeo } from "../seo";
 import { humanize, useAuthStore } from "../stores/auth.store";
 import { useChatStore } from "../stores/chat.store";
@@ -29,54 +32,50 @@ usePageSeo({
   noindex: true,
 });
 
-const displaySeconds = ref(0);
-const videoAsset = ref<VideoAssetDto | null>(null);
-const sourceUrlInput = ref("");
-const addingVideo = ref(false);
-const addVideoError = ref<string | null>(null);
-const chatInput = ref("");
-const chatLog = ref<HTMLElement | null>(null);
-
+// --- access -------------------------------------------------------------------------------
 const entering = ref(false);
-const entered = ref(false);
 const enterError = ref<string | null>(null);
-const changingVideo = ref(false);
-const copied = ref(false);
-
-// Access to the room: what the signed-out preview says, and the password flow for members-to-be.
 const notFound = ref(false);
 const requiresPassword = ref(false);
 const passwordPrompt = ref(false);
 const passwordInput = ref("");
 const passwordError = ref<string | null>(null);
 const roomInfo = ref<RoomDto | null>(null);
+const roomOwnerId = ref<string | null>(null);
 
-// Owner-only room settings.
+// --- video --------------------------------------------------------------------------------
+const videoAsset = ref<VideoAssetDto | null>(null);
+const addingVideo = ref(false);
+const addVideoError = ref<string | null>(null);
+const changingVideo = ref(false);
+const preparingSince = ref<number>(0);
+const preparingSeconds = ref(0);
+const displaySeconds = ref(0);
+
+// --- ui -----------------------------------------------------------------------------------
+const copied = ref(false);
 const settingsOpen = ref(false);
 const settingsVisibility = ref<"public" | "private">("private");
 const settingsPassword = ref("");
 const settingsSaving = ref(false);
 const settingsMessage = ref<string | null>(null);
-const durationSec = ref(0);
-const volume = ref(1);
-const muted = ref(false);
-const boxRef = ref<HTMLElement | null>(null);
-const dragSec = ref<number | null>(null);
+const notices = ref<ChatNotice[]>([]);
 
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
-const playerRef = ref<InstanceType<typeof VideoPlayer> | null>(null);
+let firstVideoTimer: ReturnType<typeof setInterval> | null = null;
+const stageRef = ref<InstanceType<typeof PlayerStage> | null>(null);
 
 const roomUrl = computed(() => `${window.location.origin}/rooms/${roomId}`);
-const isAlone = computed(() => player.members.length <= 1);
+const isRoomOwner = computed(() => roomOwnerId.value !== null && roomOwnerId.value === auth.user?.id);
 // Invited guests watch what the host picked. A guest who *started* the room is its host and may
 // pick the video — the backend enforces the same rule on addVideo; this keeps the UI honest.
-const roomOwnerId = ref<string | null>(null);
-const isRoomOwner = computed(() => roomOwnerId.value !== null && roomOwnerId.value === auth.user?.id);
 const canManageVideo = computed(() => auth.isAuthenticated && (!auth.isGuest || isRoomOwner.value));
-const showVideoForm = computed(
+const isPlaying = computed(() => player.playback.status === "playing");
+const showAddVideo = computed(
   () => canManageVideo.value && (changingVideo.value || !videoAsset.value || videoAsset.value.status === "failed"),
 );
+const alone = computed(() => player.members.length <= 1);
 
 function fullPlaybackUrl(video: VideoAssetDto): string {
   return `${API_ORIGIN}${video.playbackUrl}`;
@@ -90,16 +89,13 @@ function stopPolling() {
 function pollUntilSettled(assetId: string) {
   stopPolling();
   statusPollTimer = setInterval(async () => {
-    // An unhandled rejection in here doesn't just log noise — it skips the clearInterval below,
-    // so a failing request turns into an unkillable 2-second retry loop for the life of the page.
+    // An unhandled rejection in here would skip the clearInterval below and turn a failing request
+    // into an unkillable retry loop for the life of the page.
     try {
       const { video } = await videosApi.getStatus(assetId);
       videoAsset.value = video;
       if (video.status === "ready" || video.status === "failed") stopPolling();
     } catch {
-      // apiFetch already tries to refresh an expired session before surfacing an error, so
-      // reaching here means polling genuinely can't continue (logged out, asset gone, backend
-      // down). Retrying on a timer wouldn't fix any of those.
       stopPolling();
     }
   }, 2000);
@@ -107,16 +103,21 @@ function pollUntilSettled(assetId: string) {
 
 function trackAsset(video: VideoAssetDto | null) {
   videoAsset.value = video;
-  if (video && video.status !== "ready" && video.status !== "failed") pollUntilSettled(video.id);
+  if (video && video.status !== "ready" && video.status !== "failed") {
+    if (!preparingSince.value) preparingSince.value = Date.now();
+    pollUntilSettled(video.id);
+  } else {
+    preparingSince.value = 0;
+  }
 }
 
-async function submitVideo() {
+async function submitVideo(sourceUrl: string) {
   addingVideo.value = true;
   addVideoError.value = null;
   try {
-    const { video } = await videosApi.add(roomId, { sourceUrl: sourceUrlInput.value });
-    sourceUrlInput.value = "";
+    const { video } = await videosApi.add(roomId, { sourceUrl });
     changingVideo.value = false;
+    preparingSince.value = 0;
     trackAsset(video);
   } catch (err) {
     addVideoError.value = err instanceof Error && err.message ? err.message : "Не удалось добавить видео";
@@ -133,8 +134,7 @@ async function copyRoomLink() {
       copied.value = false;
     }, 2000);
   } catch {
-    // Clipboard access can be refused (insecure context, permissions) — leave the URL visible in
-    // the input next to the button so it can still be copied by hand.
+    // Clipboard can be refused (insecure context, permissions); the address bar still has the link.
   }
 }
 
@@ -152,29 +152,25 @@ async function enterRoom(password?: string) {
     await player.enterRoom(roomId);
     await chat.enterRoom(roomId);
 
-    // Subscribed here rather than in setup(): the socket only exists once enterRoom has run, and
-    // roomSocket registers handlers against an optional socket — subscribing earlier is a no-op
-    // that fails silently.
+    // Subscribed here rather than in setup(): the socket only exists once enterRoom has run.
     player.onVideoChanged((video) => {
       changingVideo.value = false;
+      preparingSince.value = 0;
       trackAsset(video);
     });
 
     const { video } = await videosApi.latestForRoom(roomId);
     trackAsset(video);
-
     // A room whose video is added later must not sit dead: keep re-checking until one appears.
-    // (The video:changed socket event covers the live case; this covers arriving in between.)
     if (!video) pollForFirstVideo();
 
     tickTimer = setInterval(() => {
       displaySeconds.value = player.getDisplayPositionSec();
-      playerRef.value?.applyCorrection(displaySeconds.value);
-      playerRef.value?.setPlaying(player.playback.status === "playing");
-      durationSec.value = playerRef.value?.getDuration() ?? 0;
+      stageRef.value?.applyCorrection(displaySeconds.value);
+      stageRef.value?.setPlaying(isPlaying.value);
+      stageRef.value?.refreshDuration();
+      if (preparingSince.value) preparingSeconds.value = Math.round((Date.now() - preparingSince.value) / 1000);
     }, 200);
-
-    entered.value = true;
   } catch (err) {
     if (err instanceof ApiError && (err.message === "PASSWORD_REQUIRED" || err.message === "WRONG_PASSWORD")) {
       passwordPrompt.value = true;
@@ -187,8 +183,37 @@ async function enterRoom(password?: string) {
   }
 }
 
+function pollForFirstVideo() {
+  if (firstVideoTimer) return;
+  firstVideoTimer = setInterval(async () => {
+    try {
+      const { video } = await videosApi.latestForRoom(roomId);
+      if (video) {
+        if (firstVideoTimer) clearInterval(firstVideoTimer);
+        firstVideoTimer = null;
+        trackAsset(video);
+      }
+    } catch {
+      if (firstVideoTimer) clearInterval(firstVideoTimer);
+      firstVideoTimer = null;
+    }
+  }, 3000);
+}
+
 async function submitPassword() {
   await enterRoom(passwordInput.value);
+}
+
+async function handleGuestJoin(displayName: string, password: string) {
+  entering.value = true;
+  try {
+    await auth.joinAsGuest(roomId, displayName, password);
+    await enterRoom();
+  } catch {
+    // auth.error already carries the message; the prompt renders it.
+  } finally {
+    entering.value = false;
+  }
 }
 
 async function saveSettings() {
@@ -221,34 +246,57 @@ async function removePassword() {
   }
 }
 
-let firstVideoTimer: ReturnType<typeof setInterval> | null = null;
-function pollForFirstVideo() {
-  if (firstVideoTimer) return;
-  firstVideoTimer = setInterval(async () => {
-    try {
-      const { video } = await videosApi.latestForRoom(roomId);
-      if (video) {
-        if (firstVideoTimer) clearInterval(firstVideoTimer);
-        firstVideoTimer = null;
-        trackAsset(video);
-      }
-    } catch {
-      if (firstVideoTimer) clearInterval(firstVideoTimer);
-      firstVideoTimer = null;
-    }
-  }, 3000);
+// --- playback controls --------------------------------------------------------------------
+function togglePlay() {
+  if (!auth.user) return;
+  if (isPlaying.value) player.pause(auth.user.id);
+  else player.play(auth.user.id);
 }
 
-async function handleGuestJoin(displayName: string, password: string) {
-  entering.value = true;
-  try {
-    await auth.joinAsGuest(roomId, displayName, password);
-    await enterRoom();
-  } catch {
-    // auth.error already carries the message; the prompt renders it.
-  } finally {
-    entering.value = false;
-  }
+function seekTo(sec: number) {
+  if (!auth.user) return;
+  const max = stageRef.value?.refreshDuration() || sec;
+  player.seek(auth.user.id, Math.min(Math.max(0, sec), max));
+}
+
+// Space / K play-pause, arrows ±10 s, F fullscreen, M mute — but never while typing.
+function onKeydown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target && ["INPUT", "TEXTAREA", "BUTTON", "SELECT"].includes(target.tagName)) return;
+  if (videoAsset.value?.status !== "ready") return;
+  const key = event.key.toLowerCase();
+  if (event.key === " " || key === "k") {
+    event.preventDefault();
+    togglePlay();
+  } else if (event.key === "ArrowRight") seekTo(displaySeconds.value + 10);
+  else if (event.key === "ArrowLeft") seekTo(displaySeconds.value - 10);
+  else if (key === "f") stageRef.value?.toggleFullscreen();
+  else if (key === "m") stageRef.value?.toggleMute();
+}
+
+// "Друг зашёл / вышел" — local notices derived from presence, not stored messages.
+let knownMembers = new Map<string, string>();
+watch(
+  () => player.members,
+  (members) => {
+    const next = new Map(members.map((m) => [m.userId, m.displayName]));
+    if (knownMembers.size > 0) {
+      for (const [id, name] of next) {
+        if (!knownMembers.has(id) && id !== auth.user?.id) pushNotice(`${name} зашёл(а) в комнату`);
+      }
+      for (const [id, name] of knownMembers) {
+        if (!next.has(id)) pushNotice(`${name} вышел(а)`);
+      }
+    }
+    knownMembers = next;
+  },
+  { deep: true },
+);
+function pushNotice(body: string) {
+  notices.value = [
+    ...notices.value.slice(-20),
+    { id: crypto.randomUUID(), system: true, body, createdAt: new Date().toISOString() },
+  ];
 }
 
 onMounted(async () => {
@@ -271,80 +319,6 @@ onUnmounted(() => {
   player.leaveRoom();
   chat.leaveRoom();
 });
-
-watch(
-  () => chat.messages.length,
-  () => {
-    nextTick(() => {
-      if (chatLog.value) chatLog.value.scrollTop = chatLog.value.scrollHeight;
-    });
-  },
-);
-
-function togglePlay() {
-  if (!auth.user) return;
-  if (player.playback.status === "playing") {
-    player.pause(auth.user.id);
-  } else {
-    player.play(auth.user.id);
-  }
-}
-
-function formatTime(sec: number): string {
-  const s = Math.max(0, Math.floor(sec));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const ss = String(s % 60).padStart(2, "0");
-  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
-}
-
-function seekTo(sec: number) {
-  if (!auth.user) return;
-  const max = durationSec.value > 0 ? durationSec.value : sec;
-  player.seek(auth.user.id, Math.min(Math.max(0, sec), max));
-}
-
-function onSliderInput(event: Event) {
-  dragSec.value = Number((event.target as HTMLInputElement).value);
-}
-
-function onSliderChange(event: Event) {
-  seekTo(Number((event.target as HTMLInputElement).value));
-  dragSec.value = null;
-}
-
-function applyVolume() {
-  playerRef.value?.setVolume(volume.value, muted.value);
-}
-
-function toggleMute() {
-  muted.value = !muted.value;
-  applyVolume();
-}
-
-function toggleFullscreen() {
-  if (document.fullscreenElement) document.exitFullscreen();
-  else boxRef.value?.requestFullscreen?.();
-}
-
-// Space / K play-pause, arrows ±10 s, F fullscreen, M mute — but never while typing in chat.
-function onKeydown(event: KeyboardEvent) {
-  const target = event.target as HTMLElement | null;
-  if (target && ["INPUT", "TEXTAREA", "BUTTON"].includes(target.tagName)) return;
-  if (videoAsset.value?.status !== "ready") return;
-  if (event.key === " " || event.key.toLowerCase() === "k") {
-    event.preventDefault();
-    togglePlay();
-  } else if (event.key === "ArrowRight") seekTo(displaySeconds.value + 10);
-  else if (event.key === "ArrowLeft") seekTo(displaySeconds.value - 10);
-  else if (event.key.toLowerCase() === "f") toggleFullscreen();
-  else if (event.key.toLowerCase() === "m") toggleMute();
-}
-
-function submitChatMessage() {
-  chat.send(chatInput.value);
-  chatInput.value = "";
-}
 
 function leave() {
   router.push(auth.isGuest ? "/" : "/rooms");
@@ -378,18 +352,23 @@ function leave() {
 
   <p v-else-if="enterError" class="enter-error error" role="alert">{{ enterError }}</p>
 
-  <main v-else class="room">
-    <header class="room-head">
-      <button class="quiet" @click="leave">← {{ auth.isGuest ? "На главную" : "К комнатам" }}</button>
+  <div v-else class="room">
+    <RoomTopBar
+      :name="roomInfo?.name ?? ''"
+      :visibility="roomInfo?.visibility ?? 'private'"
+      :has-password="roomInfo?.hasPassword ?? false"
+      :members="player.members"
+      :can-manage="canManageVideo && videoAsset?.status === 'ready' && !changingVideo"
+      :is-owner="isRoomOwner"
+      :copied="copied"
+      :back-label="auth.isGuest ? 'На главную' : 'К комнатам'"
+      @back="leave"
+      @copy="copyRoomLink"
+      @change-video="changingVideo = true"
+      @settings="settingsOpen = !settingsOpen"
+    />
 
-      <div class="share">
-        <input type="text" :value="roomUrl" readonly aria-label="Ссылка на комнату" @focus="($event.target as HTMLInputElement).select()" />
-        <button class="ghost" @click="copyRoomLink">{{ copied ? "Скопировано" : "Скопировать ссылку" }}</button>
-        <button v-if="isRoomOwner" class="ghost" @click="settingsOpen = !settingsOpen">Настройки</button>
-      </div>
-    </header>
-
-    <section v-if="settingsOpen && isRoomOwner" class="settings card">
+    <section v-if="settingsOpen && isRoomOwner" class="settings">
       <h2>Доступ к комнате</h2>
       <label class="opt">
         <input v-model="settingsVisibility" type="radio" value="private" />
@@ -405,163 +384,223 @@ function leave() {
           type="text"
           maxlength="72"
           autocomplete="off"
-          :placeholder="roomInfo?.hasPassword ? 'Новый пароль (оставьте пустым, чтобы не менять)' : 'Пароль (необязательно)'"
+          :placeholder="roomInfo?.hasPassword ? 'Новый пароль (пусто — не менять)' : 'Пароль (необязательно)'"
           aria-label="Пароль комнаты"
         />
         <button v-if="roomInfo?.hasPassword" class="ghost" :disabled="settingsSaving" @click="removePassword">Убрать пароль</button>
       </div>
       <div class="row">
         <button :disabled="settingsSaving" @click="saveSettings">{{ settingsSaving ? "Сохраняем…" : "Сохранить" }}</button>
+        <button class="quiet" @click="settingsOpen = false">Закрыть</button>
         <span v-if="settingsMessage" class="saved">{{ settingsMessage }}</span>
       </div>
     </section>
 
-    <p v-if="isAlone" class="invite-hint">
-      Пока вы один. Отправьте ссылку другу — ему хватит имени, регистрация не нужна.
-    </p>
+    <div class="layout">
+      <section class="main">
+        <AddVideoCard
+          v-if="showAddVideo"
+          :busy="addingVideo"
+          :error="addVideoError ?? (videoAsset?.status === 'failed' ? videoAsset.failureReason : null)"
+          :hero="!videoAsset || videoAsset.status === 'failed'"
+          :can-cancel="changingVideo"
+          @submit="submitVideo"
+          @cancel="changingVideo = false"
+        />
 
-    <section class="stage">
-      <div class="player-area">
-        <!--
-          The form is tested BEFORE the player on purpose. As a `v-else-if` after it, the
-          "ready" branch always won and the replace-video form was unreachable — which is exactly
-          the bug this was meant to fix: once a video was playing there was no way to swap it.
-        -->
-        <form v-if="showVideoForm" class="add-video card" @submit.prevent="submitVideo">
-          <h2>Что смотрим?</h2>
-          <p class="hint">Вставьте ссылку: YouTube, Twitch (в том числе прямой эфир), TikTok, VK Видео, ok.ru, Rutube или прямую на файл (.mp4, .m3u8). Друзья увидят его синхронно.</p>
-          <input v-model="sourceUrlInput" type="url" required placeholder="https://…" />
-          <div class="row">
-            <button type="submit" :disabled="addingVideo">{{ addingVideo ? "Добавляем…" : "Добавить видео" }}</button>
-            <button v-if="changingVideo" type="button" class="quiet" @click="changingVideo = false">Отмена</button>
-          </div>
-          <p v-if="videoAsset?.status === 'failed'" class="error">{{ videoAsset.failureReason }}</p>
-          <p v-if="addVideoError" class="error">{{ addVideoError }}</p>
-        </form>
+        <PlayerStage
+          v-else-if="videoAsset?.status === 'ready'"
+          ref="stageRef"
+          :src="fullPlaybackUrl(videoAsset)"
+          :playing="isPlaying"
+          :position-sec="displaySeconds"
+          :waiting-for="player.waitingFor"
+          :title="videoAsset.title"
+          :recent="chat.messages"
+          @toggle="togglePlay"
+          @seek="seekTo"
+          @stall="player.reportStall"
+          @send="chat.send"
+        />
 
-        <div v-else-if="videoAsset?.status === 'ready'" ref="boxRef" class="player-box">
-          <div class="video-wrap">
-            <VideoPlayer
-              ref="playerRef"
-              :src="fullPlaybackUrl(videoAsset)"
-              :want-playing="player.playback.status === 'playing'"
-              @toggle="togglePlay"
-              @stall="player.reportStall"
-            />
-            <div v-if="player.waitingFor.length > 0" class="waiting" role="status">
-              <span class="spinner" aria-hidden="true"></span>
-              <span>Подгружаем кадры у: {{ player.waitingFor.join(", ") }}</span>
-            </div>
-          </div>
-
-          <div class="controls">
-            <button class="icon" :aria-label="player.playback.status === 'playing' ? 'Пауза' : 'Смотреть'" @click="togglePlay">
-              {{ player.playback.status === "playing" ? "❚❚" : "▶" }}
-            </button>
-            <span class="clock">{{ formatTime(dragSec ?? displaySeconds) }}</span>
-            <input
-              class="seek"
-              type="range"
-              min="0"
-              :max="durationSec || 1"
-              step="1"
-              :value="dragSec ?? displaySeconds"
-              :disabled="!durationSec"
-              aria-label="Перемотка"
-              @input="onSliderInput"
-              @change="onSliderChange"
-            />
-            <span class="clock">{{ formatTime(durationSec) }}</span>
-            <button class="icon quiet" :aria-label="muted ? 'Включить звук' : 'Выключить звук'" @click="toggleMute">
-              {{ muted || volume === 0 ? "🔇" : "🔊" }}
-            </button>
-            <input
-              v-model.number="volume"
-              class="vol"
-              type="range"
-              min="0"
-              max="1"
-              step="0.05"
-              aria-label="Громкость"
-              @input="applyVolume"
-            />
-            <button class="icon quiet" aria-label="На весь экран" @click="toggleFullscreen">⛶</button>
-          </div>
-        </div>
-
-        <div v-else-if="videoAsset" class="preparing card">
+        <div v-else-if="videoAsset" class="preparing" role="status">
           <span class="spinner" aria-hidden="true"></span>
-          <p>Готовим видео на сервере — сервер скачивает поток, чтобы он не тормозил ни у кого из вас.</p>
-        </div>
-
-        <div v-else class="stage-empty card">
-          <span class="stage-icon" aria-hidden="true">▶</span>
-          <p>Ждём, пока хозяин комнаты выберет, что смотрим…</p>
-        </div>
-
-        <div v-if="videoAsset?.status === 'ready' && canManageVideo && !changingVideo" class="manage">
-          <button class="quiet" @click="changingVideo = true">Заменить видео</button>
-        </div>
-      </div>
-
-      <aside class="side">
-        <section class="members card">
-          <h2>В комнате · {{ player.members.length }}</h2>
-          <ul>
-            <li v-for="m in player.members" :key="m.userId">{{ m.displayName }}</li>
-          </ul>
-        </section>
-
-        <section class="chat card">
-          <h2>Чат</h2>
-          <div ref="chatLog" class="chat-log">
-            <p v-if="chat.messages.length === 0" class="chat-empty">Пока тихо. Напишите первым.</p>
-            <p v-for="m in chat.messages" :key="m.id" class="chat-message">
-              <span class="chat-author">{{ m.displayName }}</span>{{ m.body }}
+          <div>
+            <p class="p-title">Готовим видео…</p>
+            <p class="p-sub">
+              Сервер скачивает поток, чтобы он не тормозил ни у кого из вас.
+              <template v-if="preparingSeconds > 8">Уже {{ preparingSeconds }} с — для длинных видео и медленных источников это нормально.</template>
             </p>
           </div>
-          <form class="chat-form" @submit.prevent="submitChatMessage">
-            <input v-model="chatInput" type="text" maxlength="2000" placeholder="Написать…" aria-label="Сообщение" />
-            <button type="submit" :disabled="!chatInput.trim()">→</button>
-          </form>
-        </section>
+        </div>
+
+        <div v-else class="stage-empty">
+          <span class="icon" aria-hidden="true">▶</span>
+          <p>Ждём, пока хозяин комнаты выберет, что смотрим…</p>
+        </div>
+      </section>
+
+      <aside class="side">
+        <ChatPanel
+          :messages="chat.messages"
+          :notices="notices"
+          :self-id="auth.user?.id ?? null"
+          :alone="alone"
+          :invite-copied="copied"
+          @send="chat.send"
+          @invite="copyRoomLink"
+        />
       </aside>
-    </section>
-  </main>
+    </div>
+  </div>
 </template>
 
 <style scoped>
 .room {
-  max-width: var(--container);
-  margin: 0 auto;
-  padding: var(--space-5) var(--space-4) var(--space-10);
-}
-.enter-error {
-  max-width: var(--container-narrow);
-  margin: var(--space-10) auto;
-  text-align: center;
-}
-.room-head {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--space-4);
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--color-bg);
 }
-.share {
+.layout {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.side {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Desktop: video on the left, chat full-height on the right. */
+@media (min-width: 56rem) {
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22rem;
+  }
+  .main {
+    padding: var(--space-4);
+    overflow-y: auto;
+    justify-content: flex-start;
+  }
+}
+@media (min-width: 90rem) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) 26rem;
+  }
+}
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-surface-raised);
+  border-bottom: 1px solid var(--color-border);
+}
+.settings h2 {
+  font-size: var(--text-lg);
+}
+.opt {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  cursor: pointer;
+}
+.opt input {
+  width: auto;
+  margin-top: 0.3rem;
+  accent-color: var(--color-accent);
+}
+.opt b {
+  display: block;
+}
+.opt span {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.pw-row,
+.row {
   display: flex;
   gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pw-row input {
   flex: 1;
-  min-width: 16rem;
-  max-width: 32rem;
+  min-width: 14rem;
+  max-width: 28rem;
 }
-.share input {
+.saved {
+  color: var(--color-success);
   font-size: var(--text-sm);
-  color: var(--color-text-muted);
-  background: var(--color-surface);
-  text-overflow: ellipsis;
 }
+
+.preparing,
+.stage-empty {
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  text-align: left;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #1b2230, #10141b);
+  color: var(--color-text-muted);
+}
+.stage-empty {
+  flex-direction: column;
+  text-align: center;
+}
+.stage-empty .icon {
+  width: 3.5rem;
+  height: 3.5rem;
+  display: grid;
+  place-items: center;
+  padding-left: 4px;
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+  color: var(--color-accent);
+  font-size: var(--text-xl);
+}
+.p-title {
+  color: var(--color-text);
+  font-weight: 600;
+}
+.p-sub {
+  font-size: var(--text-sm);
+  max-width: 28rem;
+}
+.spinner {
+  width: 1.4rem;
+  height: 1.4rem;
+  border: 3px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+  flex: none;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (max-width: 56rem) {
+  .preparing,
+  .stage-empty {
+    border-radius: 0;
+    aspect-ratio: 16 / 10;
+  }
+}
+
 .gate {
   max-width: 26rem;
   margin: var(--space-12) auto;
@@ -590,245 +629,9 @@ function leave() {
   font-weight: 600;
   text-decoration: none;
 }
-.settings {
-  margin-bottom: var(--space-4);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.settings h2 {
-  font-size: var(--text-lg);
-}
-.settings .opt {
-  display: flex;
-  gap: var(--space-3);
-  align-items: flex-start;
-  cursor: pointer;
-}
-.settings .opt input {
-  width: auto;
-  margin-top: 0.3rem;
-  accent-color: var(--color-accent);
-}
-.settings .opt b {
-  display: block;
-}
-.settings .opt span {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-}
-.pw-row {
-  display: flex;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-.pw-row input {
-  flex: 1;
-  min-width: 14rem;
-}
-.saved {
-  color: var(--color-success);
-  font-size: var(--text-sm);
-}
-.video-wrap {
-  position: relative;
-}
-.waiting {
-  position: absolute;
-  inset: auto 0 0 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-  background: rgb(10 13 18 / 0.82);
-  color: var(--color-text);
-  font-size: var(--text-sm);
-}
-.stage-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  aspect-ratio: 16 / 9;
+.enter-error {
+  max-width: var(--container-narrow);
+  margin: var(--space-10) auto;
   text-align: center;
-  color: var(--color-text-muted);
-  background: linear-gradient(135deg, #1b2230, #10141b);
-}
-.stage-icon {
-  width: 3.5rem;
-  height: 3.5rem;
-  display: grid;
-  place-items: center;
-  padding-left: 4px;
-  border-radius: 50%;
-  background: var(--color-surface-raised);
-  color: var(--color-accent);
-  font-size: var(--text-xl);
-}
-.hint {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-}
-.share button {
-  white-space: nowrap;
-}
-.invite-hint {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  margin-bottom: var(--space-4);
-}
-
-.stage {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 20rem;
-  gap: var(--space-5);
-  align-items: start;
-}
-@media (max-width: 60rem) {
-  .stage {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
-
-.player-area {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-width: 0;
-}
-.add-video {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.add-video h2 {
-  font-size: var(--text-lg);
-}
-.row {
-  display: flex;
-  gap: var(--space-2);
-  align-items: center;
-}
-.preparing {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--color-text-muted);
-}
-.spinner {
-  width: 1rem;
-  height: 1rem;
-  border: 2px solid var(--color-border-strong);
-  border-top-color: var(--color-accent);
-  border-radius: var(--radius-full);
-  animation: spin 700ms linear infinite;
-  flex-shrink: 0;
-}
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.player-box {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  background: var(--color-bg);
-}
-.player-box:fullscreen {
-  justify-content: center;
-  padding: var(--space-4);
-}
-.controls {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-.controls .icon {
-  padding: var(--space-2) var(--space-3);
-  min-width: 2.6rem;
-}
-.controls .seek {
-  flex: 1;
-  min-width: 6rem;
-  padding: 0;
-  accent-color: var(--color-accent);
-  background: none;
-  border: none;
-}
-.controls .vol {
-  width: 5.5rem;
-  padding: 0;
-  accent-color: var(--color-accent);
-  background: none;
-  border: none;
-}
-.clock {
-  color: var(--color-text-muted);
-  font-size: var(--text-sm);
-  min-width: 2.6rem;
-}
-@media (max-width: 40rem) {
-  .controls .vol {
-    display: none;
-  }
-}
-
-.side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  min-width: 0;
-}
-.side h2 {
-  font-size: var(--text-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--color-text-faint);
-  margin-bottom: var(--space-3);
-}
-.members ul {
-  list-style: none;
-  padding: 0;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.members li {
-  background: var(--color-surface-raised);
-  border-radius: var(--radius-full);
-  padding: var(--space-1) var(--space-3);
-  font-size: var(--text-sm);
-}
-.chat-log {
-  height: 16rem;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.chat-empty {
-  color: var(--color-text-faint);
-  font-size: var(--text-sm);
-}
-.chat-message {
-  font-size: var(--text-sm);
-  word-break: break-word;
-}
-.chat-author {
-  color: var(--color-accent);
-  font-weight: 600;
-  margin-right: var(--space-2);
-}
-.chat-form {
-  display: flex;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
-}
-.chat-form button {
-  padding: var(--space-3) var(--space-4);
 }
 </style>

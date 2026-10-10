@@ -109,7 +109,9 @@ export class VideoService implements OnModuleInit {
       // provisional "direct_mp4" guess for those — the BullMQ job re-resolves through yt-dlp
       // (40-90s, not something to run in this HTTP request) and corrects `kind` for real before
       // it matters for processing. `kind` is never shown to the user while status is pending.
-      const isProvisional = fastKind === "needs_extraction" && this.resolver.isExtractorHost(sourceUrl);
+      const isProvisional =
+        fastKind === "needs_extraction" &&
+        (this.resolver.isExtractorHost(sourceUrl) || this.resolver.canSniff(sourceUrl));
       const kind = isProvisional ? "direct_mp4" : fastKind;
 
       if (!asset) {

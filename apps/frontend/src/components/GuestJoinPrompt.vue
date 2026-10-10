@@ -21,6 +21,7 @@ function submit() {
     <form @submit.prevent="submit">
       <input
         v-model="displayName"
+        data-testid="guest-name"
         type="text"
         maxlength="32"
         required
@@ -37,7 +38,7 @@ function submit() {
         placeholder="Пароль комнаты"
         aria-label="Пароль комнаты"
       />
-      <button type="submit" :disabled="props.submitting || !displayName.trim()">
+      <button type="submit" data-testid="guest-submit" :disabled="props.submitting || !displayName.trim()">
         {{ props.submitting ? "Заходим…" : "Смотреть" }}
       </button>
     </form>

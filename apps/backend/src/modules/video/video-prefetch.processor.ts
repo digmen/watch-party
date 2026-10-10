@@ -121,8 +121,13 @@ export class VideoPrefetchProcessor extends WorkerHost {
       this.logger.error(`could not resolve a playable stream for asset ${assetId}: ${(err as Error).message}`);
       await this.db
         .update(videoAssets)
-        .set({ status: "failed", failureReason: (err as Error).message.slice(0, 2000) })
+        .set({
+          status: "failed",
+          failureReason:
+            "Не получилось найти видео по этой ссылке. Если это страница сайта — откройте само видео и скопируйте ссылку на файл или трансляцию.",
+        })
         .where(eq(videoAssets.id, assetId));
+      await this.announce(assetId);
       return;
     }
     await this.db
@@ -189,7 +194,10 @@ export class VideoPrefetchProcessor extends WorkerHost {
 
     // Reconnect flags: sources like googlevideo/CDNs drop long connections; without them one reset
     // ends a two-hour download at minute 40.
+    // HLS playlists from arbitrary sites often name segments with odd extensions; the demuxer refuses
+    // them unless told otherwise. The option only exists for HLS input, so it is added per URL.
     const input = (url: string) => [
+      ...(/\.m3u8(\?|#|$)/i.test(url) ? ["-allowed_extensions", "ALL"] : []),
       ...headerArgs,
       "-reconnect",
       "1",
@@ -201,6 +209,10 @@ export class VideoPrefetchProcessor extends WorkerHost {
       url,
     ];
 
+    // MPEG-TS carries H.264/AAC (and little else) in a form every player understands. Anything newer —
+    // AV1, VP9, HEVC, Opus, which is what many sites serve — needs fragmented MP4 segments, which
+    // hls.js and Safari both play. The source is probed first so the common case keeps TS.
+    const fmp4 = await this.needsFmp4([sourceUrl, ...(audioUrl ? [audioUrl] : [])], headerArgs);
     const hlsArgs = [
       "-c",
       "copy",
@@ -214,8 +226,9 @@ export class VideoPrefetchProcessor extends WorkerHost {
       "event",
       "-hls_flags",
       "temp_file",
+      ...(fmp4 ? ["-hls_segment_type", "fmp4", "-hls_fmp4_init_filename", "init.mp4"] : []),
       "-hls_segment_filename",
-      `${cacheDir}/%03d.ts`,
+      `${cacheDir}/%03d.${fmp4 ? "m4s" : "ts"}`,
       `${cacheDir}/playlist.m3u8`,
     ];
 
@@ -302,6 +315,44 @@ export class VideoPrefetchProcessor extends WorkerHost {
     await this.markFailed(assetId, lastReason);
   }
 
+  // True when any stream is something MPEG-TS cannot carry for a browser. Unknown (probe failed or
+  // timed out) means "no": the proven TS path stays the default.
+  private async needsFmp4(urls: string[], headerArgs: string[]): Promise<boolean> {
+    const TS_VIDEO = new Set(["h264"]);
+    const TS_AUDIO = new Set(["aac", "mp3", "ac3", "eac3", "mp2"]);
+    for (const url of urls) {
+      try {
+        const proc = Bun.spawn(
+          [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=codec_type,codec_name",
+            "-of",
+            "csv=p=0",
+            ...(/\.m3u8(\?|#|$)/i.test(url) ? ["-allowed_extensions", "ALL"] : []),
+            ...headerArgs,
+            "-i",
+            url,
+          ],
+          { stdout: "pipe", stderr: "ignore" },
+        );
+        const timer = setTimeout(() => proc.kill(), 25_000);
+        const out = await new Response(proc.stdout).text();
+        clearTimeout(timer);
+        for (const line of out.split("\n")) {
+          const [codec, type] = line.trim().split(",");
+          if (type === "video" && !TS_VIDEO.has(codec)) return true;
+          if (type === "audio" && !TS_AUDIO.has(codec)) return true;
+        }
+      } catch {
+        // ffprobe missing or failed: fall back to the default container
+      }
+    }
+    return false;
+  }
+
   private spawnPipeline(pageUrl: string, hlsArgs: string[]) {
     const downloader = Bun.spawn(
       [
@@ -345,5 +396,5 @@ function humanizeFfmpegError(stderr: string): string {
     return "Видео по этой ссылке не найдено — возможно, оно удалено.";
   if (/Invalid data found|moov atom not found/.test(tail))
     return "Не удалось прочитать видео: файл повреждён или не полностью загружен.";
-  return `Не удалось обработать видео. ${lines.slice(-2).join(" ").slice(0, 300)}`;
+  return "Не удалось обработать видео. Попробуйте другую ссылку или повторите позже.";
 }

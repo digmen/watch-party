@@ -1,0 +1,8 @@
+{
+  "name": "watch-party-sniffer",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "playwright-core": "^1.50.0" }
+}

@@ -114,6 +114,7 @@ export class VideoCacheService {
   }
 
   async getOrFetchSegment(assetHash: string, token: string): Promise<string> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(token) || token.includes("..")) throw new Error("Invalid segment name");
     const segmentPath = path.join(this.dirFor(assetHash), token);
     const exists = await stat(segmentPath)
       .then(() => true)

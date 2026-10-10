@@ -1,0 +1,7 @@
+{
+  "name": "watch-party-qa",
+  "private": true,
+  "type": "module",
+  "scripts": { "qa": "node run.mjs" },
+  "dependencies": { "playwright-core": "^1.50.0" }
+}

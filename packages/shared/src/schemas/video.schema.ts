@@ -69,5 +69,6 @@ export const VideoAssetSchema = z.object({
   status: z.enum(["pending", "processing", "ready", "failed"]),
   playbackUrl: z.string().nullable(),
   failureReason: z.string().nullable(),
+  title: z.string().nullable(),
 });
 export type VideoAssetDto = z.infer<typeof VideoAssetSchema>;

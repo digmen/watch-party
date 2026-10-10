@@ -1,0 +1,26 @@
+# Optional (WP_SNIFFER=1 in infra/.env): a headless Chromium that finds the real stream behind
+# arbitrary video pages. Isolated on its own network — the browser opens untrusted pages, so it must
+# not be able to talk to postgres/redis; only the backend can reach it.
+services:
+  sniffer:
+    build:
+      context: ../services/sniffer
+    restart: unless-stopped
+    init: true
+    shm_size: 256m
+    mem_limit: ${WP_SNIFFER_MEM:-900m}
+    networks:
+      - sniffer-net
+
+  backend:
+    environment:
+      SNIFFER_URL: http://sniffer:4000
+    networks:
+      - watchparty-net
+      - sniffer-net
+    depends_on:
+      - sniffer
+
+networks:
+  sniffer-net:
+    driver: bridge

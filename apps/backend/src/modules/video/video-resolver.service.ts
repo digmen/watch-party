@@ -82,6 +82,51 @@ export class VideoResolverService {
     return (await this.classifyDirectUrl(sourceUrl)) ?? "needs_extraction";
   }
 
+  // The browser-based fallback (services/sniffer) is optional: configured per deployment.
+  canSniff(sourceUrl: string): boolean {
+    if (!process.env.SNIFFER_URL) return false;
+    try {
+      return /^https?:$/.test(new URL(sourceUrl).protocol);
+    } catch {
+      return false;
+    }
+  }
+
+  // Opens the page in a real browser, presses play and reports the media request it makes.
+  private async sniffPage(pageUrl: string): Promise<ResolvedPlayback | undefined> {
+    const base = process.env.SNIFFER_URL;
+    if (!base) return undefined;
+    try {
+      const res = await fetch(`${base}/sniff`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: pageUrl }),
+        signal: AbortSignal.timeout(70_000),
+      });
+      const body = (await res.json()) as {
+        ok: boolean;
+        error?: string;
+        title?: string | null;
+        media?: { url: string; kind: "hls" | "dash" | "mp4"; headers: Record<string, string> };
+      };
+      this.logger.log(
+        `sniffer for ${pageUrl}: ${body.ok ? `${body.media?.kind} ${body.media?.url.slice(0, 90)}` : body.error}`,
+      );
+      if (!body.ok || !body.media) return undefined;
+      // Every sniffed stream goes through ffmpeg: it understands master playlists, encrypted and
+      // fMP4 HLS and DASH, which the plain playlist proxy deliberately does not.
+      return {
+        kind: "direct_mp4",
+        playbackUrl: body.media.url,
+        headers: body.media.headers,
+        title: body.title ?? undefined,
+      };
+    } catch (err) {
+      this.logger.warn(`sniffer failed for ${pageUrl}: ${(err as Error).message}`);
+      return undefined;
+    }
+  }
+
   isExtractorHost(sourceUrl: string): boolean {
     try {
       const host = new URL(sourceUrl).hostname.toLowerCase();
@@ -120,6 +165,10 @@ export class VideoResolverService {
         return { ...base, kind: resolvedKind, playbackUrl: resolved.url };
       }
     }
+
+    // Not a file, not a known platform: let a real browser look at the page.
+    const sniffed = await this.sniffPage(sourceUrl);
+    if (sniffed) return sniffed;
 
     throw new Error(`Could not resolve a playable stream for ${sourceUrl}`);
   }

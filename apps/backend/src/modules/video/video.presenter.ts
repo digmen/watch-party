@@ -8,5 +8,6 @@ export function toVideoAssetDto(asset: VideoAsset): VideoAssetDto {
     status: asset.status,
     playbackUrl: asset.status === "ready" ? `/api/video/proxy/${asset.id}/playlist.m3u8` : null,
     failureReason: asset.failureReason,
+    title: asset.title,
   };
 }

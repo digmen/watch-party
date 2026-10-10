@@ -6,6 +6,13 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- Room page redesigned: top bar (name, access badge, avatars, invite), controls inside the player that fade out, chat with bubbles/avatars/"X joined" notices/unread jump button, mobile layout (video on top, chat below, input pinned to the bottom), fullscreen with chat overlay (pseudo-fullscreen where the Fullscreen API is missing, e.g. iPhone). `data-testid` hooks for tests.
+- `services/sniffer`: headless Chromium that opens an arbitrary page, presses play and reports the real stream URL + headers; the backend then remuxes it like any other source. Works for pages that hide a player behind iframes/tokens. Network-isolated container, private addresses blocked.
+- fMP4 HLS segments when the source codecs (AV1, VP9, HEVC, Opus…) cannot live in MPEG-TS; H.264/AAC keeps TS.
+- Security: segment/init names from the URL are validated (path traversal through `..%2F` in `/api/video/proxy/:id/:token` is closed).
+- `qa/` suite: slow viewer, flaky segments, socket drop, reload, clock skew, late join, iPhone WebKit, crowd, mobile layout.
+- Infra: second host support (configurable ports/memory, optional Caddy edge on :9443 for Cloudflare, optional sniffer).
+
 - Rooms are public or private (link-only), with an optional password set at creation or later by the owner (settings panel in the room). Landing shows the 10 newest public rooms, `/public` lists them all; private/password rooms are entered by link (+ password). New public endpoints `GET /api/public/rooms` and `/api/public/rooms/:id`; `PATCH /api/rooms/:id` for the owner.
 - "No frame, no playback": a viewer whose buffer runs dry pauses the whole room (server-held, with a "waiting for X" banner) and the room resumes by itself once everyone has frames. Verified with an artificially stalled client.
 - More sources via yt-dlp: YouTube (video+audio merged without re-encoding, up to 1080p H.264/AAC), Twitch incl. live (captured into a growing playlist), TikTok, Rutube, Dailymotion, X/Twitter, VK, ok.ru. Video titles are stored for room lists.

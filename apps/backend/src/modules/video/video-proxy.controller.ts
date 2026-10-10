@@ -7,6 +7,7 @@ import {
   HttpException,
   HttpStatus,
   Inject,
+  NotFoundException,
   Param,
   Post,
   Res,
@@ -137,6 +138,9 @@ export class VideoProxyController {
     // network tab, screen-share, a proxy log) must stop working the moment membership does, not
     // linger until the next playlist reload. The extra query is one indexed lookup — real cost
     // only if this endpoint ever gets busy, which it doesn't yet (see 2026-09-05 usage audit).
+    // The token becomes part of a file path: only plain segment/init file names are allowed. Without
+    // this, `..%2F..%2Fetc%2Fpasswd` (the router decodes it into the param) walks out of the cache.
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(token) || token.includes("..")) throw new NotFoundException();
     await this.assertAssetAccessible(id, user.sub);
     const asset = await this.videos.getAsset(id);
     await this.videos.touchLastAccessed(id);
@@ -148,6 +152,6 @@ export class VideoProxyController {
         ? `${this.cache.dirFor(asset.sourceUrlHash)}/${token}`
         : await this.cache.getOrFetchSegment(asset.sourceUrlHash, token);
 
-    reply.type("video/mp2t").send(createReadStream(segmentPath));
+    reply.type(/\.(m4s|mp4)$/i.test(token) ? "video/mp4" : "video/mp2t").send(createReadStream(segmentPath));
   }
 }

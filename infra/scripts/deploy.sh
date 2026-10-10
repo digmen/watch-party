@@ -19,8 +19,12 @@ if [ "${WP_EDGE:-0}" = "1" ]; then
   COMPOSE="$COMPOSE -f infra/docker-compose.edge.yml"
   SERVICES="$SERVICES edge"
 fi
+if [ "${WP_SNIFFER:-0}" = "1" ]; then
+  COMPOSE="$COMPOSE -f infra/docker-compose.sniffer.yml"
+  SERVICES="$SERVICES sniffer"
+fi
 
-$COMPOSE build backend frontend
+$COMPOSE build $SERVICES
 $COMPOSE up -d --wait postgres redis
 
 # Симлинк под захардкоженный в сборке относительный путь миграций (см. коммит,

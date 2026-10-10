@@ -119,13 +119,14 @@ function continueWithGoogle() {
         <form class="start" @submit.prevent="startNow">
           <input
             v-model="displayName"
+            data-testid="landing-name"
             type="text"
             maxlength="32"
             required
             placeholder="Ваше имя"
             aria-label="Ваше имя"
           />
-          <button type="submit" :disabled="starting || !displayName.trim()">
+          <button type="submit" data-testid="landing-start" :disabled="starting || !displayName.trim()">
             {{ starting ? "Создаём…" : "Создать комнату" }}
           </button>
         </form>
