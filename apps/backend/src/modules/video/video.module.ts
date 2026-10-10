@@ -9,10 +9,18 @@ import { VideoCacheCleanupService } from "./video-cache-cleanup.service";
 import { VideoPrefetchProcessor } from "./video-prefetch.processor";
 import { VideoProxyController } from "./video-proxy.controller";
 import { VideoResolverService } from "./video-resolver.service";
+import { YtDlpUpdaterService } from "./ytdlp-updater.service";
 
 @Module({
   imports: [AuthModule, RoomsModule, GatewayModule, BullModule.registerQueue({ name: "video-prefetch" })],
   controllers: [VideoProxyController],
-  providers: [VideoResolverService, VideoCacheService, VideoCacheCleanupService, VideoPrefetchProcessor, VideoService],
+  providers: [
+    VideoResolverService,
+    VideoCacheService,
+    VideoCacheCleanupService,
+    VideoPrefetchProcessor,
+    VideoService,
+    YtDlpUpdaterService,
+  ],
 })
 export class VideoModule {}

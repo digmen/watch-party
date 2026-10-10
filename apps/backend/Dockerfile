@@ -44,6 +44,10 @@ FROM oven/bun:1-alpine AS runtime
 # video-resolver.service.ts (ok.ru, vk.com/vkvideo.ru) whose page URLs aren't themselves playable —
 # it does NOT enable arbitrary-page extraction, see the resolver's ALLOWED_EXTRACTOR_HOSTS.
 RUN apk add --no-cache ffmpeg yt-dlp
+# The distro package lags behind site changes. A self-updatable release sits first on PATH so the
+# nightly YtDlpUpdaterService can refresh it without rebuilding the image.
+RUN mkdir -p /home/bun/.local/bin  && wget -qO /home/bun/.local/bin/yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp  && chmod 755 /home/bun/.local/bin/yt-dlp  && chown -R bun:bun /home/bun/.local
+ENV PATH=/home/bun/.local/bin:$PATH
 
 WORKDIR /repo
 ENV NODE_ENV=production

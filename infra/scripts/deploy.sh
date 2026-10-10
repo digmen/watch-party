@@ -8,6 +8,13 @@ cd "$(dirname "$0")/../.."
 git fetch origin master
 git reset --hard origin/master
 
+# This very file may have just changed: bash reads a script lazily, so continuing would run a mix of
+# the old and the new text. Start again from the fresh copy exactly once.
+if [ -z "${WP_DEPLOY_REEXEC:-}" ]; then
+  export WP_DEPLOY_REEXEC=1
+  exec bash infra/scripts/deploy.sh
+fi
+
 # Порты/лимиты этой машины (infra/.env, не в git) — нужны и compose, и проверкам ниже.
 if [ -f infra/.env ]; then set -a; . infra/.env; set +a; fi
 WP_BACKEND_PORT=${WP_BACKEND_PORT:-3000}

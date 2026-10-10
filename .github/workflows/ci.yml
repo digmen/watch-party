@@ -70,3 +70,19 @@ jobs:
           username: root
           key: ${{ secrets.WATCHPARTY_SSH_KEY }}
           script: bash /root/watch-party/infra/scripts/deploy.sh
+
+  # The main host. Its key can run exactly one command (forced in authorized_keys on the server):
+  # the deploy script. It builds with low priority because VPN traffic shares the machine.
+  deploy-prague:
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    needs: [build-lint-typecheck-test, docker-build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH (forced command)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.WATCHPARTY_PRAGUE_SSH_HOST }}
+          username: root
+          key: ${{ secrets.WATCHPARTY_PRAGUE_SSH_KEY }}
+          command_timeout: 30m
+          script: echo "the server runs infra/scripts/deploy.sh regardless of this line"

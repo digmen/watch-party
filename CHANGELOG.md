@@ -6,6 +6,8 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- CI deploys to the Prague host too (`deploy-prague`), through a key that can run only the deploy script (forced command). `deploy.sh` re-executes itself after `git reset`, so a changed script never runs half-old. yt-dlp now lives as a self-updating release first on PATH and a nightly job refreshes it (`YtDlpUpdaterService`).
+
 - Fix: after a network drop (metro, Wi-Fi↔LTE, phone lock) the client re-joins the room, adopts the current playback state and back-fills missed chat. Before, the new socket was never in the room and silently stopped receiving play/pause/seek/stall/chat — found by the `socket-drop` QA scenario, which now cuts the socket for real. Also: no stacked time-sync listeners on reconnect; server-initiated disconnects reconnect.
 - QA runner: `--only` parsing fixed (no flag = all scenarios); backup scripts use a per-host prefix in the shared R2 bucket.
 
