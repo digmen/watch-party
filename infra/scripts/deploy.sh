@@ -8,6 +8,11 @@ cd "$(dirname "$0")/../.."
 git fetch origin master
 git reset --hard origin/master
 
+# Порты/лимиты этой машины (infra/.env, не в git) — нужны и compose, и проверкам ниже.
+if [ -f infra/.env ]; then set -a; . infra/.env; set +a; fi
+WP_BACKEND_PORT=${WP_BACKEND_PORT:-3000}
+WP_FRONTEND_PORT=${WP_FRONTEND_PORT:-8080}
+
 COMPOSE="docker compose -f infra/docker-compose.yml -f infra/docker-compose.caddy.yml"
 
 $COMPOSE build backend frontend
@@ -29,7 +34,7 @@ $COMPOSE up -d backend frontend
 # Ждём health вместо фиксированного sleep — и явно проваливаемся, если не поднялось,
 # а не оставляем битый деплой молча висеть.
 for i in $(seq 1 20); do
-  if curl -fs http://127.0.0.1:3000/api/health >/dev/null 2>&1; then
+  if curl -fs http://127.0.0.1:${WP_BACKEND_PORT}/api/health >/dev/null 2>&1; then
     echo "backend healthy"
     break
   fi
@@ -46,7 +51,7 @@ done
 # случай 01.09 — деплой прошёл полностью успешно, все правки на месте, а CI покраснел на
 # ровном месте из-за гонки именно тут).
 for i in $(seq 1 20); do
-  if curl -fs -o /dev/null http://127.0.0.1:8080/; then
+  if curl -fs -o /dev/null http://127.0.0.1:${WP_FRONTEND_PORT}/; then
     echo "frontend healthy"
     break
   fi

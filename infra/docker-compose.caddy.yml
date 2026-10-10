@@ -14,12 +14,13 @@ services:
       REDIS_URL: redis://redis:6379
       VIDEO_CACHE_PATH: /data/video-cache
     ports:
-      - "127.0.0.1:3000:3000"
+      # Порты настраиваются через infra/.env: на сервере, где 3000/8080 заняты соседями, ставим другие.
+      - "127.0.0.1:${WP_BACKEND_PORT:-3000}:3000"
     volumes:
       - video-cache:/data/video-cache
     networks:
       - watchparty-net
-    mem_limit: 300m
+    mem_limit: ${WP_BACKEND_MEM:-300m}
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,7 +42,7 @@ services:
         VITE_PUBLIC_ORIGIN: ${VITE_PUBLIC_ORIGIN:-https://kerry.zone}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:80"
+      - "127.0.0.1:${WP_FRONTEND_PORT:-8080}:80"
     networks:
       - watchparty-net
     mem_limit: 32m
