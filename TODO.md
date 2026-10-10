@@ -37,6 +37,9 @@ Deliberate trade-offs. Documented so the reasoning survives, not because they're
 
 ## Nice to have
 
+- [ ] Google OAuth consent screen must be switched from "Testing" to "In production", otherwise only listed test users can sign in.
+- [ ] Submit `https://kerry.zone/sitemap.xml` in Search Console and request indexing of `/`.
+
 - [ ] **Paid ad-free plan.** The product is free with ads between sessions; a paid plan removes
       the ads and changes nothing else — no feature gating beyond that. Needs a subscription/
       payment system, not built yet. No ads system exists yet either, so this is genuinely two
