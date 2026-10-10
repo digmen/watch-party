@@ -36,6 +36,14 @@ interface SocketData {
   isGuest: boolean;
 }
 
+// Every viewer computes "where should I be" as position + (their server-corrected clock - the
+// event's timestamp). So the timestamp has to be on the SERVER clock: stamping it with the sender's
+// own Date.now() makes everyone's position wrong by exactly that machine's clock error — a viewer
+// whose clock is two minutes off would freeze the whole room at 0:00 for two minutes.
+function stampWithServerTime<T extends { originTimestampMs: number }>(body: T): T {
+  return { ...body, originTimestampMs: Date.now() };
+}
+
 @WebSocketGateway()
 export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   @WebSocketServer() server!: Server;
@@ -137,35 +145,38 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   @SubscribeMessage(SocketEvents.PlayerPlay)
   async onPlay(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string } & PlayEvent) {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
+    const stamped = stampWithServerTime(body);
     await this.playbackState.set(body.roomId, {
       status: "playing",
       positionSec: body.positionSec,
-      updatedAtMs: body.originTimestampMs,
+      updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerPlay, body);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerPlay, stamped);
   }
 
   @SubscribeMessage(SocketEvents.PlayerPause)
   async onPause(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string } & PauseEvent) {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
+    const stamped = stampWithServerTime(body);
     await this.playbackState.set(body.roomId, {
       status: "paused",
       positionSec: body.positionSec,
-      updatedAtMs: body.originTimestampMs,
+      updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerPause, body);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerPause, stamped);
   }
 
   @SubscribeMessage(SocketEvents.PlayerSeek)
   async onSeek(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string } & SeekEvent) {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const current = await this.playbackState.get(body.roomId);
+    const stamped = stampWithServerTime(body);
     await this.playbackState.set(body.roomId, {
       status: current.status,
       positionSec: body.positionSec,
-      updatedAtMs: body.originTimestampMs,
+      updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerSeek, body);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerSeek, stamped);
   }
 
   @SubscribeMessage(SocketEvents.TimeSync)
