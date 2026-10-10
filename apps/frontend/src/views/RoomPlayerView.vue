@@ -42,6 +42,11 @@ const entered = ref(false);
 const enterError = ref<string | null>(null);
 const changingVideo = ref(false);
 const copied = ref(false);
+const durationSec = ref(0);
+const volume = ref(1);
+const muted = ref(false);
+const boxRef = ref<HTMLElement | null>(null);
+const dragSec = ref<number | null>(null);
 
 let tickTimer: ReturnType<typeof setInterval> | null = null;
 let statusPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -148,6 +153,7 @@ async function enterRoom() {
       displaySeconds.value = player.getDisplayPositionSec();
       playerRef.value?.applyCorrection(displaySeconds.value);
       playerRef.value?.setPlaying(player.playback.status === "playing");
+      durationSec.value = playerRef.value?.getDuration() ?? 0;
     }, 200);
 
     entered.value = true;
@@ -189,10 +195,12 @@ async function handleGuestJoin(displayName: string) {
 }
 
 onMounted(() => {
+  window.addEventListener("keydown", onKeydown);
   if (auth.isAuthenticated) return enterRoom();
 });
 
 onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
   if (tickTimer) clearInterval(tickTimer);
   if (firstVideoTimer) clearInterval(firstVideoTimer);
   stopPolling();
@@ -216,6 +224,57 @@ function togglePlay() {
   } else {
     player.play(auth.user.id);
   }
+}
+
+function formatTime(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${String(m).padStart(2, "0")}:${ss}` : `${m}:${ss}`;
+}
+
+function seekTo(sec: number) {
+  if (!auth.user) return;
+  const max = durationSec.value > 0 ? durationSec.value : sec;
+  player.seek(auth.user.id, Math.min(Math.max(0, sec), max));
+}
+
+function onSliderInput(event: Event) {
+  dragSec.value = Number((event.target as HTMLInputElement).value);
+}
+
+function onSliderChange(event: Event) {
+  seekTo(Number((event.target as HTMLInputElement).value));
+  dragSec.value = null;
+}
+
+function applyVolume() {
+  playerRef.value?.setVolume(volume.value, muted.value);
+}
+
+function toggleMute() {
+  muted.value = !muted.value;
+  applyVolume();
+}
+
+function toggleFullscreen() {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else boxRef.value?.requestFullscreen?.();
+}
+
+// Space / K play-pause, arrows ±10 s, F fullscreen, M mute — but never while typing in chat.
+function onKeydown(event: KeyboardEvent) {
+  const target = event.target as HTMLElement | null;
+  if (target && ["INPUT", "TEXTAREA", "BUTTON"].includes(target.tagName)) return;
+  if (videoAsset.value?.status !== "ready") return;
+  if (event.key === " " || event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    togglePlay();
+  } else if (event.key === "ArrowRight") seekTo(displaySeconds.value + 10);
+  else if (event.key === "ArrowLeft") seekTo(displaySeconds.value - 10);
+  else if (event.key.toLowerCase() === "f") toggleFullscreen();
+  else if (event.key.toLowerCase() === "m") toggleMute();
 }
 
 function submitChatMessage() {
@@ -271,11 +330,43 @@ function leave() {
           <p v-if="addVideoError" class="error">{{ addVideoError }}</p>
         </form>
 
-        <VideoPlayer
-          v-else-if="videoAsset?.status === 'ready'"
-          ref="playerRef"
-          :src="fullPlaybackUrl(videoAsset)"
-        />
+        <div v-else-if="videoAsset?.status === 'ready'" ref="boxRef" class="player-box">
+          <VideoPlayer ref="playerRef" :src="fullPlaybackUrl(videoAsset)" @toggle="togglePlay" />
+
+          <div class="controls">
+            <button class="icon" :aria-label="player.playback.status === 'playing' ? 'Пауза' : 'Смотреть'" @click="togglePlay">
+              {{ player.playback.status === "playing" ? "❚❚" : "▶" }}
+            </button>
+            <span class="clock">{{ formatTime(dragSec ?? displaySeconds) }}</span>
+            <input
+              class="seek"
+              type="range"
+              min="0"
+              :max="durationSec || 1"
+              step="1"
+              :value="dragSec ?? displaySeconds"
+              :disabled="!durationSec"
+              aria-label="Перемотка"
+              @input="onSliderInput"
+              @change="onSliderChange"
+            />
+            <span class="clock">{{ formatTime(durationSec) }}</span>
+            <button class="icon quiet" :aria-label="muted ? 'Включить звук' : 'Выключить звук'" @click="toggleMute">
+              {{ muted || volume === 0 ? "🔇" : "🔊" }}
+            </button>
+            <input
+              v-model.number="volume"
+              class="vol"
+              type="range"
+              min="0"
+              max="1"
+              step="0.05"
+              aria-label="Громкость"
+              @input="applyVolume"
+            />
+            <button class="icon quiet" aria-label="На весь экран" @click="toggleFullscreen">⛶</button>
+          </div>
+        </div>
 
         <div v-else-if="videoAsset" class="preparing card">
           <span class="spinner" aria-hidden="true"></span>
@@ -287,16 +378,8 @@ function leave() {
           <p>Ждём, пока хозяин комнаты выберет, что смотрим…</p>
         </div>
 
-        <div v-if="videoAsset?.status === 'ready' && !changingVideo" class="controls">
-          <button @click="togglePlay">{{ player.playback.status === "playing" ? "Пауза" : "Смотреть" }}</button>
-          <span class="clock">{{ displaySeconds.toFixed(1) }}s</span>
-          <button
-            v-if="canManageVideo && !changingVideo"
-            class="quiet"
-            @click="changingVideo = true"
-          >
-            Заменить видео
-          </button>
+        <div v-if="videoAsset?.status === 'ready' && canManageVideo && !changingVideo" class="manage">
+          <button class="quiet" @click="changingVideo = true">Заменить видео</button>
         </div>
       </div>
 
@@ -444,14 +527,49 @@ function leave() {
     transform: rotate(360deg);
   }
 }
+.player-box {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--color-bg);
+}
+.player-box:fullscreen {
+  justify-content: center;
+  padding: var(--space-4);
+}
 .controls {
   display: flex;
   align-items: center;
   gap: var(--space-3);
 }
+.controls .icon {
+  padding: var(--space-2) var(--space-3);
+  min-width: 2.6rem;
+}
+.controls .seek {
+  flex: 1;
+  min-width: 6rem;
+  padding: 0;
+  accent-color: var(--color-accent);
+  background: none;
+  border: none;
+}
+.controls .vol {
+  width: 5.5rem;
+  padding: 0;
+  accent-color: var(--color-accent);
+  background: none;
+  border: none;
+}
 .clock {
-  color: var(--color-text-faint);
+  color: var(--color-text-muted);
   font-size: var(--text-sm);
+  min-width: 2.6rem;
+}
+@media (max-width: 40rem) {
+  .controls .vol {
+    display: none;
+  }
 }
 
 .side {

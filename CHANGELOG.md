@@ -6,6 +6,11 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- Playback starts while the video is still downloading (HLS event playlist, "ready" after ~18 s of video) instead of after the whole file; failed-midway downloads end cleanly. Up to 3 videos are processed at once.
+- Room player: own controls (play/pause, shared seek slider, time, volume, fullscreen, Space/K, arrows ±10 s, F, M). Seeking now syncs the whole room — native controls were removed because their seek bar only moved one viewer.
+- hls.js requests carry credentials (needed for cross-origin API), start at 0 and recover from fatal network/media errors.
+- Unsupported-link error is now in Russian and lists what is supported.
+
 - Daily Postgres backup to Cloudflare R2 (`infra/scripts/backup.sh`, bucket `watchparty-backups`, 30-day lifecycle) and `infra/scripts/restore.sh` for moving to any host. Restore verified against a throwaway container.
 - Landing and About rewritten in plain language (no engineering jargon, no ad/paid-plan promises that do not exist), FAQ with FAQPage JSON-LD.
 

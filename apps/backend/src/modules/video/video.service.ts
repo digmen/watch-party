@@ -11,7 +11,7 @@ import type { PrefetchJobData } from "./video-prefetch.processor";
 import { VideoResolverService } from "./video-resolver.service";
 
 const NEEDS_EXTRACTION_MESSAGE =
-  "Provide a direct video file or HLS/DASH manifest URL — arbitrary page extraction isn't implemented in this MVP.";
+  "Эта ссылка не подходит: сервис открывает прямые ссылки на видеофайлы (.mp4, .m3u8, .mpd), а также ok.ru и VK Видео. YouTube, Netflix, Кинопоиск и страницы онлайн-кинотеатров не поддерживаются.";
 
 const INTERRUPTED_MESSAGE = "Обработка прервалась (сервер перезапустился). Отправьте ссылку ещё раз.";
 

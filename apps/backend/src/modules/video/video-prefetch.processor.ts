@@ -21,11 +21,17 @@ export interface PrefetchJobData {
 // TCP read holds the single concurrency slot forever and every later video queues behind it.
 const REMUX_TIMEOUT_MS = 30 * 60_000;
 
+// How many 6-second segments must exist before the room is told "playable" (~18s of video).
+const READY_AFTER_SEGMENTS = 3;
+
+// Three at once: a long film keeps its slot for the whole download (playback starts early, the job
+// does not end early), and with a single slot one big video would block everyone else's.
+//
 // Remux (`-c copy`), never re-encode: this just repackages the container into HLS segments
 // without touching the video/audio streams, so it costs a fraction of a second of CPU per second
 // of video instead of a full decode+encode pass — see the deploy-target note in the plan about
 // why re-encoding (AV1/VP9) is deliberately NOT what happens here on a 1 vCPU box.
-@Processor("video-prefetch", { concurrency: 1 })
+@Processor("video-prefetch", { concurrency: 3 })
 export class VideoPrefetchProcessor extends WorkerHost {
   private readonly logger = new Logger(VideoPrefetchProcessor.name);
 
@@ -171,7 +177,9 @@ export class VideoPrefetchProcessor extends WorkerHost {
         "-hls_list_size",
         "0",
         "-hls_playlist_type",
-        "vod",
+        "event",
+        "-hls_flags",
+        "temp_file",
         "-hls_segment_filename",
         `${cacheDir}/%03d.ts`,
         `${cacheDir}/playlist.m3u8`,
@@ -185,19 +193,40 @@ export class VideoPrefetchProcessor extends WorkerHost {
       proc.kill();
     }, REMUX_TIMEOUT_MS);
 
+    // Playback starts as soon as a few segments exist: a two-hour film takes many minutes to
+    // download in full, and nobody should stare at a spinner for that long. The playlist is an
+    // HLS "event" playlist — it keeps growing while ffmpeg works and gets its ENDLIST at the end.
+    let announcedReady = false;
+    const readyWatcher = setInterval(async () => {
+      if (announcedReady) return;
+      const segments = await this.cache.countSegmentsInPlaylist(assetHash);
+      if (segments >= READY_AFTER_SEGMENTS) {
+        announcedReady = true;
+        await this.markReady(assetId, cacheDir).catch(() => {});
+        this.logger.log(`asset ${assetId} playable after ${segments} segments (download continues)`);
+      }
+    }, 1000);
+
     const [exitCode, stderrText] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
     clearTimeout(timeout);
+    clearInterval(readyWatcher);
 
     if (exitCode !== 0) {
       const reason = timedOut
         ? `Источник отдаёт видео слишком медленно — обработка прервана по таймауту (${REMUX_TIMEOUT_MS / 60_000} мин).`
         : stderrText.split("\n").slice(-10).join("\n");
       this.logger.error(`ffmpeg failed for asset ${assetId} (exit ${exitCode}, timedOut=${timedOut}): ${reason}`);
+      if (announcedReady) {
+        // People are already watching: keep what was downloaded and close the playlist so the
+        // player ends cleanly instead of waiting forever for segments that will never come.
+        await this.cache.closePlaylist(assetHash);
+        return;
+      }
       await this.markFailed(assetId, reason);
       return;
     }
 
-    await this.markReady(assetId, cacheDir);
-    this.logger.log(`asset ${assetId} ready at ${cacheDir}`);
+    if (!announcedReady) await this.markReady(assetId, cacheDir);
+    this.logger.log(`asset ${assetId} fully downloaded at ${cacheDir}`);
   }
 }

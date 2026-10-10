@@ -78,6 +78,15 @@ export const usePlayerStore = defineStore("player", {
       });
     },
 
+    // Everyone in the room follows this: the server rebroadcasts it, and the position is applied
+    // locally right away so the slider doesn't snap back while the round trip is in flight.
+    seek(userId: string, positionSec: number) {
+      if (!this.roomId) return;
+      const originTimestampMs = Date.now();
+      roomSocket.emitSeek({ roomId: this.roomId, positionSec, originTimestampMs, byUserId: userId });
+      this.applyEvent({ positionSec, originTimestampMs: roomSocket.clockSync.correctedNow() }, this.playback.status);
+    },
+
     leaveRoom() {
       if (this.roomId) roomSocket.leaveRoom(this.roomId);
       roomSocket.disconnect();

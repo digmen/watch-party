@@ -83,6 +83,28 @@ export class VideoCacheService {
     await writeFile(this.playlistPath(assetHash), rewritten);
   }
 
+  // Number of segments listed so far in a playlist that ffmpeg is still writing. 0 when the file
+  // does not exist yet.
+  async countSegmentsInPlaylist(assetHash: string): Promise<number> {
+    try {
+      const text = await readFile(this.playlistPath(assetHash), "utf-8");
+      return text.split("\n").filter((line) => line.startsWith("#EXTINF")).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  // Terminates an event playlist whose writer died, so players treat it as a finished (shorter)
+  // video rather than a live stream waiting for more.
+  async closePlaylist(assetHash: string): Promise<void> {
+    try {
+      const text = await readFile(this.playlistPath(assetHash), "utf-8");
+      if (!text.includes("#EXT-X-ENDLIST")) await writeFile(this.playlistPath(assetHash), `${text.trimEnd()}\n#EXT-X-ENDLIST\n`);
+    } catch {
+      // No playlist at all — nothing playable to close.
+    }
+  }
+
   async readPlaylist(assetHash: string): Promise<string> {
     return readFile(this.playlistPath(assetHash), "utf-8");
   }
