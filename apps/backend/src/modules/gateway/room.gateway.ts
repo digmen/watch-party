@@ -25,6 +25,7 @@ import { ChatService } from "../chat/chat.service";
 import { RoomsService } from "../rooms/rooms.service";
 import { PlaybackStateService } from "./playback-state.service";
 import { PresenceService } from "./presence.service";
+import { StallService } from "./stall.service";
 import { parseCookieHeader } from "./socket-cookie.util";
 
 const HEARTBEAT_INTERVAL_MS = 7000;
@@ -57,6 +58,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     private readonly rooms: RoomsService,
     private readonly presence: PresenceService,
     private readonly playbackState: PlaybackStateService,
+    private readonly stall: StallService,
     private readonly chat: ChatService,
   ) {}
 
@@ -87,6 +89,8 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
 
   private async tickHeartbeats() {
     for (const roomId of this.localActiveRooms) {
+      // Expired stall entries must not freeze a room forever.
+      if (await this.stall.isAutoPaused(roomId)) await this.settleStall(roomId, "system");
       const state = await this.playbackState.get(roomId);
       if (state.status !== "playing") continue;
 
@@ -112,8 +116,10 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
       if (roomId === socket.id) continue;
       await this.presence.removeSocket(roomId, socket.id);
       await this.broadcastPresence(roomId);
+      // Someone who disconnects mid-stall must not keep the room frozen.
+      await this.stall.remove(roomId, data.userId);
+      await this.settleStall(roomId, data.userId);
     }
-    void data;
   }
 
   @SubscribeMessage(SocketEvents.RoomJoin)
@@ -158,6 +164,7 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   async onPause(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string } & PauseEvent) {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const stamped = stampWithServerTime(body);
+    await this.stall.clearAutoPaused(body.roomId); // a person paused: do not auto-resume behind their back
     await this.playbackState.set(body.roomId, {
       status: "paused",
       positionSec: body.positionSec,
@@ -177,6 +184,55 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
       updatedAtMs: stamped.originTimestampMs,
     });
     this.server.to(body.roomId).emit(SocketEvents.PlayerSeek, stamped);
+  }
+
+  // A viewer's buffer ran dry (stalled=true) or recovered (stalled=false). While anyone is waiting
+  // the room is held paused at the exact position everyone had reached; it resumes on its own.
+  @SubscribeMessage(SocketEvents.PlayerStall)
+  async onStall(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string; stalled: boolean }) {
+    const userId = (socket.data as SocketData).userId;
+    if (!(await this.rooms.isMember(body.roomId, userId))) return;
+
+    if (!body.stalled) {
+      await this.stall.remove(body.roomId, userId);
+      await this.settleStall(body.roomId, userId);
+      return;
+    }
+
+    const name = (await this.rooms.listMembers(body.roomId)).find((m) => m.userId === userId)?.displayName ?? "?";
+    await this.stall.add(body.roomId, userId, name);
+
+    const state = await this.playbackState.get(body.roomId);
+    if (state.status === "playing") {
+      const now = Date.now();
+      const positionSec = this.playbackState.projectedPosition(state, now);
+      await this.stall.markAutoPaused(body.roomId);
+      await this.playbackState.set(body.roomId, { status: "paused", positionSec, updatedAtMs: now });
+      this.server
+        .to(body.roomId)
+        .emit(SocketEvents.PlayerPause, { positionSec, originTimestampMs: now, byUserId: userId });
+    }
+    await this.broadcastStall(body.roomId);
+  }
+
+  // Called whenever a staller leaves the list: tells everybody who is still being waited for and,
+  // once nobody is, resumes a room that this mechanism (not a person) paused.
+  private async settleStall(roomId: string, byUserId: string): Promise<void> {
+    const waiting = await this.stall.active(roomId);
+    if (waiting.length === 0 && (await this.stall.consumeAutoPaused(roomId))) {
+      const state = await this.playbackState.get(roomId);
+      const now = Date.now();
+      await this.playbackState.set(roomId, { status: "playing", positionSec: state.positionSec, updatedAtMs: now });
+      this.server
+        .to(roomId)
+        .emit(SocketEvents.PlayerPlay, { positionSec: state.positionSec, originTimestampMs: now, byUserId });
+    }
+    await this.broadcastStall(roomId);
+  }
+
+  private async broadcastStall(roomId: string): Promise<void> {
+    const waiting = await this.stall.active(roomId);
+    this.server.to(roomId).emit(SocketEvents.RoomStall, { roomId, waitingFor: waiting.map((w) => w.name) });
   }
 
   @SubscribeMessage(SocketEvents.TimeSync)

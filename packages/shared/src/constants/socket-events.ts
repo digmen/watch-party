@@ -6,6 +6,11 @@ export const SocketEvents = {
   PlayerPause: "player:pause",
   PlayerSeek: "player:seek",
   PlayerHeartbeat: "player:heartbeat",
+  // Client -> server: "my buffer ran dry" / "my buffer is healthy again". The server pauses the whole
+  // room while anyone is waiting for data and resumes it when everybody has frames again.
+  PlayerStall: "player:stall",
+  // Server -> clients: who the room is currently waiting for (empty = nobody).
+  RoomStall: "room:stall",
   TimeSync: "time:sync",
   ChatMessage: "chat:message",
   // Server -> clients when the room's current video is swapped or finishes preparing. Without it

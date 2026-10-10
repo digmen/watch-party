@@ -11,7 +11,25 @@ import type { PrefetchJobData } from "./video-prefetch.processor";
 import { VideoResolverService } from "./video-resolver.service";
 
 const NEEDS_EXTRACTION_MESSAGE =
-  "Эта ссылка не подходит: сервис открывает прямые ссылки на видеофайлы (.mp4, .m3u8, .mpd), а также ok.ru и VK Видео. YouTube, Netflix, Кинопоиск и страницы онлайн-кинотеатров не поддерживаются.";
+  "Эта ссылка не подходит: сервис открывает прямые ссылки на видеофайлы (.mp4, .m3u8, .mpd), а также YouTube, Twitch, TikTok, VK, ok.ru, Rutube и Dailymotion. Страницы онлайн-кинотеатров и платные сервисы (Netflix, Кинопоиск) не поддерживаются.";
+
+// A readable title for lists: the file name for direct links; extractor sites (YouTube, VK, …)
+// get theirs from yt-dlp later, so these stay null until then.
+function titleFromUrl(sourceUrl: string): string | null {
+  try {
+    const url = new URL(sourceUrl);
+    if (!/\.(mp4|webm|mov|m4v|m3u8|mpd)$/i.test(url.pathname)) return null;
+    const name = decodeURIComponent(url.pathname.split("/").pop() ?? "").replace(/\.[^.]+$/, "");
+    return (
+      name
+        .replace(/[_.-]+/g, " ")
+        .trim()
+        .slice(0, 120) || null
+    );
+  } catch {
+    return null;
+  }
+}
 
 const INTERRUPTED_MESSAGE = "Обработка прервалась (сервер перезапустился). Отправьте ссылку ещё раз.";
 
@@ -97,7 +115,7 @@ export class VideoService implements OnModuleInit {
       if (!asset) {
         [asset] = await this.db
           .insert(videoAssets)
-          .values({ sourceUrl, sourceUrlHash, kind, status: "pending" })
+          .values({ sourceUrl, sourceUrlHash, kind, status: "pending", title: titleFromUrl(sourceUrl) })
           .returning();
       } else {
         [asset] = await this.db

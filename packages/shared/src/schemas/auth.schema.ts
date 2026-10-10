@@ -34,6 +34,8 @@ export const GuestJoinSchema = z.object({
     .min(1)
     .max(32)
     .regex(/^[^\p{Cc}\p{Cf}]+$/u, "Имя содержит недопустимые символы"),
+  // Only needed for rooms that have one; ignored otherwise.
+  password: z.string().min(1).max(72).optional(),
 });
 export type GuestJoinDto = z.infer<typeof GuestJoinSchema>;
 
@@ -42,5 +44,7 @@ export type GuestJoinDto = z.infer<typeof GuestJoinSchema>;
 export const GuestStartSchema = z.object({
   displayName: GuestJoinSchema.shape.displayName,
   roomName: z.string().trim().min(1).max(80).optional(),
+  visibility: z.enum(["public", "private"]).default("private"),
+  password: z.string().min(1).max(72).optional(),
 });
-export type GuestStartDto = z.infer<typeof GuestStartSchema>;
+export type GuestStartDto = z.input<typeof GuestStartSchema>;

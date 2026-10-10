@@ -8,6 +8,8 @@ export const videoAssets = pgTable("video_assets", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   sourceUrlHash: text("source_url_hash").notNull().unique(),
   sourceUrl: text("source_url").notNull(),
+  // Human title for lists ("Сейчас смотрят"): from the extractor when there is one, else the file name.
+  title: text("title"),
   kind: text("kind", { enum: VIDEO_KINDS }).notNull(),
   status: text("status", { enum: VIDEO_STATUSES }).notNull().default("pending"),
   storagePath: text("storage_path"),

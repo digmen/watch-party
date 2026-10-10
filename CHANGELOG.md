@@ -6,6 +6,10 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- Rooms are public or private (link-only), with an optional password set at creation or later by the owner (settings panel in the room). Landing shows the 10 newest public rooms, `/public` lists them all; private/password rooms are entered by link (+ password). New public endpoints `GET /api/public/rooms` and `/api/public/rooms/:id`; `PATCH /api/rooms/:id` for the owner.
+- "No frame, no playback": a viewer whose buffer runs dry pauses the whole room (server-held, with a "waiting for X" banner) and the room resumes by itself once everyone has frames. Verified with an artificially stalled client.
+- More sources via yt-dlp: YouTube (video+audio merged without re-encoding, up to 1080p H.264/AAC), Twitch incl. live (captured into a growing playlist), TikTok, Rutube, Dailymotion, X/Twitter, VK, ok.ru. Video titles are stored for room lists.
+
 - A download interrupted by a restart no longer removes a video people are watching: once it has enough segments the asset stays `ready` with a closed playlist (it simply ends earlier). Verified by killing the backend and ffmpeg mid-download.
 
 - Fix: play/pause/seek events are stamped with the server clock instead of the sender's own. With a client clock off by N seconds the whole room froze at the start for N seconds (reproduced on production, verified fixed with clocks skewed by +150 s / -90 s).

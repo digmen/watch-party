@@ -4,6 +4,8 @@ import { useRouter } from "vue-router";
 import { useRoomsStore } from "../stores/rooms.store";
 
 const name = ref("");
+const visibility = ref<"public" | "private">("private");
+const password = ref("");
 const submitting = ref(false);
 const error = ref<string | null>(null);
 
@@ -14,7 +16,7 @@ async function submit() {
   submitting.value = true;
   error.value = null;
   try {
-    const room = await rooms.createRoom(name.value);
+    const room = await rooms.createRoom(name.value, visibility.value, password.value || undefined);
     router.push(`/rooms/${room.id}`);
   } catch {
     error.value = "Не удалось создать комнату";
@@ -34,6 +36,23 @@ async function submit() {
         Название
         <input v-model="name" required maxlength="80" placeholder="Вечер пятницы" autofocus />
       </label>
+      <fieldset class="vis">
+        <legend>Кто может зайти</legend>
+        <label class="opt">
+          <input v-model="visibility" type="radio" value="private" />
+          <span><b>По ссылке</b> Только те, кому вы отправили ссылку.</span>
+        </label>
+        <label class="opt">
+          <input v-model="visibility" type="radio" value="public" />
+          <span><b>Публичная</b> Видна в списке на главной, зайти может любой.</span>
+        </label>
+      </fieldset>
+
+      <label>
+        Пароль <span class="opt-hint">(необязательно)</span>
+        <input v-model="password" type="text" maxlength="72" autocomplete="off" placeholder="Без пароля — зайдёт любой со ссылкой" />
+      </label>
+
       <p v-if="error" class="error">{{ error }}</p>
       <button type="submit" :disabled="submitting">{{ submitting ? "Создаём…" : "Создать" }}</button>
     </form>
@@ -67,6 +86,40 @@ label {
   gap: var(--space-2);
   font-size: var(--text-sm);
   color: var(--color-text-muted);
+}
+.vis {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.vis legend {
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+.opt {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--space-3);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.opt input {
+  width: auto;
+  margin-top: 0.3rem;
+  accent-color: var(--color-accent);
+}
+.opt b {
+  display: block;
+}
+.opt span {
+  color: var(--color-text-muted);
+}
+.opt-hint {
+  color: var(--color-text-faint);
 }
 .back {
   margin-top: var(--space-6);

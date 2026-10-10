@@ -3,6 +3,13 @@ import { defineStore } from "pinia";
 import { authApi } from "../api/auth.api";
 import { ApiError } from "../api/client";
 
+// The API answers a few room-entry failures with machine codes; people should see words.
+export function humanize(message: string): string {
+  if (message === "PASSWORD_REQUIRED") return "Для этой комнаты нужен пароль";
+  if (message === "WRONG_PASSWORD") return "Неверный пароль";
+  return message;
+}
+
 interface AuthState {
   user: UserDto | null;
   status: "idle" | "loading" | "ready";
@@ -54,23 +61,27 @@ export const useAuthStore = defineStore("auth", {
       }
     },
 
-    async joinAsGuest(roomId: string, displayName: string) {
+    async joinAsGuest(roomId: string, displayName: string, password?: string) {
       this.error = null;
       try {
-        const { user } = await authApi.joinAsGuest({ roomId, displayName });
+        const { user } = await authApi.joinAsGuest({ roomId, displayName, password: password || undefined });
         this.user = user;
         this.status = "ready";
       } catch (err) {
-        this.error = err instanceof ApiError ? err.message : "Не удалось войти как гость";
+        this.error = err instanceof ApiError ? humanize(err.message) : "Не удалось войти как гость";
         throw err;
       }
     },
 
     // Creates the guest and their room in one call; returns the room id to navigate to.
-    async startAsGuest(displayName: string, roomName?: string): Promise<string> {
+    async startAsGuest(
+      displayName: string,
+      roomName?: string,
+      options: { visibility?: "public" | "private"; password?: string } = {},
+    ): Promise<string> {
       this.error = null;
       try {
-        const { user, room } = await authApi.startAsGuest({ displayName, roomName });
+        const { user, room } = await authApi.startAsGuest({ displayName, roomName, ...options });
         this.user = user;
         this.status = "ready";
         return room.id;

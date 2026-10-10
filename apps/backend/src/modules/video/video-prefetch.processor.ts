@@ -7,7 +7,7 @@ import { roomVideos, videoAssets } from "../../database/schema";
 import { RoomGateway } from "../gateway/room.gateway";
 import { toVideoAssetDto } from "./video.presenter";
 import { READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
-import { VideoResolverService } from "./video-resolver.service";
+import { type ResolvedPlayback, VideoResolverService } from "./video-resolver.service";
 
 export interface PrefetchJobData {
   assetId: string;
@@ -19,7 +19,9 @@ export interface PrefetchJobData {
 // Generous, but finite. A remux is bounded by download speed, not CPU (`-c copy`), so a big file
 // on a slow origin legitimately takes many minutes — but "no timeout at all" means one stalled
 // TCP read holds the single concurrency slot forever and every later video queues behind it.
-const REMUX_TIMEOUT_MS = 30 * 60_000;
+const REMUX_TIMEOUT_MS = 2 * 60 * 60_000;
+// A live broadcast is captured for as long as it runs, capped so a forgotten room cannot fill the disk.
+const LIVE_CAPTURE_TIMEOUT_MS = 6 * 60 * 60_000;
 
 // Three at once: a long film keeps its slot for the whole download (playback starts early, the job
 // does not end early), and with a single slot one big video would block everyone else's.
@@ -111,8 +113,10 @@ export class VideoPrefetchProcessor extends WorkerHost {
     let kind: PrefetchJobData["kind"];
     let playbackUrl: string;
     let headers: Record<string, string>;
+    let resolved: ResolvedPlayback;
     try {
-      ({ kind, playbackUrl, headers } = await this.resolver.resolveForFetch(sourceUrl));
+      resolved = await this.resolver.resolveForFetch(sourceUrl);
+      ({ kind, playbackUrl, headers } = resolved);
     } catch (err) {
       this.logger.error(`could not resolve a playable stream for asset ${assetId}: ${(err as Error).message}`);
       await this.db
@@ -121,14 +125,17 @@ export class VideoPrefetchProcessor extends WorkerHost {
         .where(eq(videoAssets.id, assetId));
       return;
     }
-    await this.db.update(videoAssets).set({ kind }).where(eq(videoAssets.id, assetId));
+    await this.db
+      .update(videoAssets)
+      .set({ kind, ...(resolved.title ? { title: resolved.title.slice(0, 200) } : {}) })
+      .where(eq(videoAssets.id, assetId));
 
     if (kind === "hls" || kind === "dash") {
       await this.prepareManifestPassthrough(assetId, assetHash, playbackUrl, headers);
       return;
     }
 
-    await this.remuxDirectMp4(assetId, assetHash, playbackUrl, headers);
+    await this.remuxDirectMp4(assetId, assetHash, playbackUrl, headers, resolved.audioUrl, resolved.isLive === true);
   }
 
   private async prepareManifestPassthrough(
@@ -152,6 +159,8 @@ export class VideoPrefetchProcessor extends WorkerHost {
     assetHash: string,
     sourceUrl: string,
     headers: Record<string, string>,
+    audioUrl?: string,
+    isLive = false,
   ): Promise<void> {
     this.logger.log(`remuxing asset ${assetId} (${sourceUrl})`);
     const cacheDir = await this.cache.ensureDir(assetHash);
@@ -169,13 +178,26 @@ export class VideoPrefetchProcessor extends WorkerHost {
           ]
         : [];
 
+    // Reconnect flags: sources like googlevideo/CDNs drop long connections; without them one reset
+    // ends a two-hour download at minute 40.
+    const input = (url: string) => [
+      ...headerArgs,
+      "-reconnect",
+      "1",
+      "-reconnect_streamed",
+      "1",
+      "-reconnect_delay_max",
+      "5",
+      "-i",
+      url,
+    ];
+
     const proc = Bun.spawn(
       [
         "ffmpeg",
         "-y",
-        ...headerArgs,
-        "-i",
-        sourceUrl,
+        ...input(sourceUrl),
+        ...(audioUrl ? [...input(audioUrl), "-map", "0:v:0", "-map", "1:a:0"] : []),
         "-c",
         "copy",
         "-start_number",
@@ -196,10 +218,13 @@ export class VideoPrefetchProcessor extends WorkerHost {
     );
 
     let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      proc.kill();
-    }, REMUX_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => {
+        timedOut = true;
+        proc.kill();
+      },
+      isLive ? LIVE_CAPTURE_TIMEOUT_MS : REMUX_TIMEOUT_MS,
+    );
 
     // Playback starts as soon as a few segments exist: a two-hour film takes many minutes to
     // download in full, and nobody should stare at a spinner for that long. The playlist is an

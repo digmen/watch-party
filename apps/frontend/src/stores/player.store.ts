@@ -11,6 +11,8 @@ interface PresenceMember {
 interface PlayerState {
   roomId: string | null;
   members: PresenceMember[];
+  // Names of people whose picture is still loading — the whole room is held until they catch up.
+  waitingFor: string[];
   playback: RoomPlaybackState;
 }
 
@@ -18,6 +20,7 @@ export const usePlayerStore = defineStore("player", {
   state: (): PlayerState => ({
     roomId: null,
     members: [],
+    waitingFor: [],
     playback: { status: "paused", positionSec: 0, updatedAtMs: 0 },
   }),
 
@@ -36,6 +39,9 @@ export const usePlayerStore = defineStore("player", {
 
       roomSocket.onPresence((event: PresenceUpdate) => {
         if (event.roomId === this.roomId) this.members = event.members;
+      });
+      roomSocket.onRoomStall((event) => {
+        if (event.roomId === this.roomId) this.waitingFor = event.waitingFor;
       });
       roomSocket.onPlay((event) => this.applyEvent(event as PlayEvent, "playing"));
       roomSocket.onPause((event) => this.applyEvent(event as PauseEvent, "paused"));
@@ -80,6 +86,10 @@ export const usePlayerStore = defineStore("player", {
 
     // Everyone in the room follows this: the server rebroadcasts it, and the position is applied
     // locally right away so the slider doesn't snap back while the round trip is in flight.
+    reportStall(stalled: boolean) {
+      if (this.roomId) roomSocket.emitStall(this.roomId, stalled);
+    },
+
     seek(userId: string, positionSec: number) {
       if (!this.roomId) return;
       const originTimestampMs = Date.now();
@@ -92,6 +102,7 @@ export const usePlayerStore = defineStore("player", {
       roomSocket.disconnect();
       this.roomId = null;
       this.members = [];
+      this.waitingFor = [];
     },
   },
 });

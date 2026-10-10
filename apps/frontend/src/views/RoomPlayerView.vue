@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import type { VideoAssetDto } from "@watch-party/shared";
+import type { RoomDto, VideoAssetDto } from "@watch-party/shared";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { API_ORIGIN } from "../api/client";
+import { API_ORIGIN, ApiError } from "../api/client";
 import { roomsApi } from "../api/rooms.api";
 import { videosApi } from "../api/videos.api";
 import GuestJoinPrompt from "../components/GuestJoinPrompt.vue";
 import VideoPlayer from "../components/VideoPlayer.vue";
 import { usePageSeo } from "../seo";
-import { useAuthStore } from "../stores/auth.store";
+import { humanize, useAuthStore } from "../stores/auth.store";
 import { useChatStore } from "../stores/chat.store";
 import { usePlayerStore } from "../stores/player.store";
 
@@ -42,6 +42,21 @@ const entered = ref(false);
 const enterError = ref<string | null>(null);
 const changingVideo = ref(false);
 const copied = ref(false);
+
+// Access to the room: what the signed-out preview says, and the password flow for members-to-be.
+const notFound = ref(false);
+const requiresPassword = ref(false);
+const passwordPrompt = ref(false);
+const passwordInput = ref("");
+const passwordError = ref<string | null>(null);
+const roomInfo = ref<RoomDto | null>(null);
+
+// Owner-only room settings.
+const settingsOpen = ref(false);
+const settingsVisibility = ref<"public" | "private">("private");
+const settingsPassword = ref("");
+const settingsSaving = ref(false);
+const settingsMessage = ref<string | null>(null);
 const durationSec = ref(0);
 const volume = ref(1);
 const muted = ref(false);
@@ -125,12 +140,15 @@ async function copyRoomLink() {
 
 // Everything that requires a session. Split out of onMounted so the guest prompt can call it
 // again after the guest signs in, without a page reload.
-async function enterRoom() {
+async function enterRoom(password?: string) {
   entering.value = true;
   enterError.value = null;
   try {
-    const joined = await roomsApi.join(roomId);
+    const joined = await roomsApi.join(roomId, password);
     roomOwnerId.value = joined.room.ownerId;
+    roomInfo.value = joined.room;
+    settingsVisibility.value = joined.room.visibility;
+    passwordPrompt.value = false;
     await player.enterRoom(roomId);
     await chat.enterRoom(roomId);
 
@@ -157,10 +175,49 @@ async function enterRoom() {
     }, 200);
 
     entered.value = true;
-  } catch {
-    enterError.value = "Не удалось войти в комнату. Обновите страницу или попросите новую ссылку.";
+  } catch (err) {
+    if (err instanceof ApiError && (err.message === "PASSWORD_REQUIRED" || err.message === "WRONG_PASSWORD")) {
+      passwordPrompt.value = true;
+      passwordError.value = err.message === "WRONG_PASSWORD" ? humanize(err.message) : null;
+    } else {
+      enterError.value = "Не удалось войти в комнату. Обновите страницу или попросите новую ссылку.";
+    }
   } finally {
     entering.value = false;
+  }
+}
+
+async function submitPassword() {
+  await enterRoom(passwordInput.value);
+}
+
+async function saveSettings() {
+  settingsSaving.value = true;
+  settingsMessage.value = null;
+  try {
+    const dto: { visibility: "public" | "private"; password?: string | null } = { visibility: settingsVisibility.value };
+    if (settingsPassword.value) dto.password = settingsPassword.value;
+    const { room } = await roomsApi.update(roomId, dto);
+    roomInfo.value = room;
+    settingsPassword.value = "";
+    settingsMessage.value = "Сохранено";
+  } catch {
+    settingsMessage.value = "Не удалось сохранить";
+  } finally {
+    settingsSaving.value = false;
+  }
+}
+
+async function removePassword() {
+  settingsSaving.value = true;
+  try {
+    const { room } = await roomsApi.update(roomId, { password: null });
+    roomInfo.value = room;
+    settingsMessage.value = "Пароль убран";
+  } catch {
+    settingsMessage.value = "Не удалось сохранить";
+  } finally {
+    settingsSaving.value = false;
   }
 }
 
@@ -182,10 +239,10 @@ function pollForFirstVideo() {
   }, 3000);
 }
 
-async function handleGuestJoin(displayName: string) {
+async function handleGuestJoin(displayName: string, password: string) {
   entering.value = true;
   try {
-    await auth.joinAsGuest(roomId, displayName);
+    await auth.joinAsGuest(roomId, displayName, password);
     await enterRoom();
   } catch {
     // auth.error already carries the message; the prompt renders it.
@@ -194,8 +251,15 @@ async function handleGuestJoin(displayName: string) {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   window.addEventListener("keydown", onKeydown);
+  try {
+    const { room } = await roomsApi.preview(roomId);
+    requiresPassword.value = room.requiresPassword;
+  } catch {
+    notFound.value = true;
+    return;
+  }
   if (auth.isAuthenticated) return enterRoom();
 });
 
@@ -288,12 +352,29 @@ function leave() {
 </script>
 
 <template>
+  <main v-if="notFound" class="gate">
+    <h1>Комната не найдена</h1>
+    <p class="lede">Ссылка устарела или в ней опечатка. Возможно, комнату уже закрыли.</p>
+    <RouterLink class="btn" to="/">На главную</RouterLink>
+  </main>
+
   <GuestJoinPrompt
-    v-if="!auth.isAuthenticated"
+    v-else-if="!auth.isAuthenticated"
     :submitting="entering"
     :error="auth.error"
+    :requires-password="requiresPassword"
     @submit="handleGuestJoin"
   />
+
+  <main v-else-if="passwordPrompt" class="gate">
+    <h1>Комната под паролем</h1>
+    <p class="lede">Введите пароль, который вам сообщил хозяин комнаты.</p>
+    <form class="gate-form" @submit.prevent="submitPassword">
+      <input v-model="passwordInput" type="password" required autofocus autocomplete="off" placeholder="Пароль" aria-label="Пароль комнаты" />
+      <button type="submit" :disabled="entering || !passwordInput">{{ entering ? "Проверяем…" : "Войти" }}</button>
+    </form>
+    <p v-if="passwordError" class="error" role="alert">{{ passwordError }}</p>
+  </main>
 
   <p v-else-if="enterError" class="enter-error error" role="alert">{{ enterError }}</p>
 
@@ -304,8 +385,36 @@ function leave() {
       <div class="share">
         <input type="text" :value="roomUrl" readonly aria-label="Ссылка на комнату" @focus="($event.target as HTMLInputElement).select()" />
         <button class="ghost" @click="copyRoomLink">{{ copied ? "Скопировано" : "Скопировать ссылку" }}</button>
+        <button v-if="isRoomOwner" class="ghost" @click="settingsOpen = !settingsOpen">Настройки</button>
       </div>
     </header>
+
+    <section v-if="settingsOpen && isRoomOwner" class="settings card">
+      <h2>Доступ к комнате</h2>
+      <label class="opt">
+        <input v-model="settingsVisibility" type="radio" value="private" />
+        <span><b>По ссылке</b> Только те, у кого есть ссылка.</span>
+      </label>
+      <label class="opt">
+        <input v-model="settingsVisibility" type="radio" value="public" />
+        <span><b>Публичная</b> Видна в списке публичных комнат.</span>
+      </label>
+      <div class="pw-row">
+        <input
+          v-model="settingsPassword"
+          type="text"
+          maxlength="72"
+          autocomplete="off"
+          :placeholder="roomInfo?.hasPassword ? 'Новый пароль (оставьте пустым, чтобы не менять)' : 'Пароль (необязательно)'"
+          aria-label="Пароль комнаты"
+        />
+        <button v-if="roomInfo?.hasPassword" class="ghost" :disabled="settingsSaving" @click="removePassword">Убрать пароль</button>
+      </div>
+      <div class="row">
+        <button :disabled="settingsSaving" @click="saveSettings">{{ settingsSaving ? "Сохраняем…" : "Сохранить" }}</button>
+        <span v-if="settingsMessage" class="saved">{{ settingsMessage }}</span>
+      </div>
+    </section>
 
     <p v-if="isAlone" class="invite-hint">
       Пока вы один. Отправьте ссылку другу — ему хватит имени, регистрация не нужна.
@@ -320,7 +429,7 @@ function leave() {
         -->
         <form v-if="showVideoForm" class="add-video card" @submit.prevent="submitVideo">
           <h2>Что смотрим?</h2>
-          <p class="hint">Вставьте ссылку на видео — прямую (.mp4, .m3u8), ok.ru или VK Видео. Друзья увидят его синхронно.</p>
+          <p class="hint">Вставьте ссылку: YouTube, Twitch (в том числе прямой эфир), TikTok, VK Видео, ok.ru, Rutube или прямую на файл (.mp4, .m3u8). Друзья увидят его синхронно.</p>
           <input v-model="sourceUrlInput" type="url" required placeholder="https://…" />
           <div class="row">
             <button type="submit" :disabled="addingVideo">{{ addingVideo ? "Добавляем…" : "Добавить видео" }}</button>
@@ -331,7 +440,19 @@ function leave() {
         </form>
 
         <div v-else-if="videoAsset?.status === 'ready'" ref="boxRef" class="player-box">
-          <VideoPlayer ref="playerRef" :src="fullPlaybackUrl(videoAsset)" @toggle="togglePlay" />
+          <div class="video-wrap">
+            <VideoPlayer
+              ref="playerRef"
+              :src="fullPlaybackUrl(videoAsset)"
+              :want-playing="player.playback.status === 'playing'"
+              @toggle="togglePlay"
+              @stall="player.reportStall"
+            />
+            <div v-if="player.waitingFor.length > 0" class="waiting" role="status">
+              <span class="spinner" aria-hidden="true"></span>
+              <span>Подгружаем кадры у: {{ player.waitingFor.join(", ") }}</span>
+            </div>
+          </div>
 
           <div class="controls">
             <button class="icon" :aria-label="player.playback.status === 'playing' ? 'Пауза' : 'Смотреть'" @click="togglePlay">
@@ -440,6 +561,90 @@ function leave() {
   color: var(--color-text-muted);
   background: var(--color-surface);
   text-overflow: ellipsis;
+}
+.gate {
+  max-width: 26rem;
+  margin: var(--space-12) auto;
+  padding: 0 var(--space-4);
+  text-align: center;
+}
+.gate h1 {
+  font-size: var(--text-2xl);
+  margin-bottom: var(--space-2);
+}
+.gate .lede {
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-5);
+}
+.gate-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.gate .btn {
+  display: inline-flex;
+  padding: var(--space-3) var(--space-6);
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-weight: 600;
+  text-decoration: none;
+}
+.settings {
+  margin-bottom: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.settings h2 {
+  font-size: var(--text-lg);
+}
+.settings .opt {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  cursor: pointer;
+}
+.settings .opt input {
+  width: auto;
+  margin-top: 0.3rem;
+  accent-color: var(--color-accent);
+}
+.settings .opt b {
+  display: block;
+}
+.settings .opt span {
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+}
+.pw-row {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+.pw-row input {
+  flex: 1;
+  min-width: 14rem;
+}
+.saved {
+  color: var(--color-success);
+  font-size: var(--text-sm);
+}
+.video-wrap {
+  position: relative;
+}
+.waiting {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  background: rgb(10 13 18 / 0.82);
+  color: var(--color-text);
+  font-size: var(--text-sm);
 }
 .stage-empty {
   display: flex;

@@ -21,8 +21,8 @@ export const useRoomsStore = defineStore("rooms", {
       }
     },
 
-    async createRoom(name: string): Promise<RoomDto> {
-      const { room } = await roomsApi.create({ name });
+    async createRoom(name: string, visibility: "public" | "private" = "private", password?: string): Promise<RoomDto> {
+      const { room } = await roomsApi.create({ name, visibility, password: password || undefined });
       this.rooms.push(room);
       return room;
     },

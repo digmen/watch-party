@@ -36,6 +36,13 @@
       "when": 1785784416411,
       "tag": "0004_sleepy_puck",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791656859210,
+      "tag": "0005_noisy_black_queen",
+      "breakpoints": true
     }
   ]
 }

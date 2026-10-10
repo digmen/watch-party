@@ -26,6 +26,7 @@ async function logout() {
       </RouterLink>
 
       <nav>
+        <RouterLink to="/public">Публичные комнаты</RouterLink>
         <RouterLink to="/about">О проекте</RouterLink>
         <template v-if="auth.isAuthenticated && !auth.isGuest">
           <RouterLink to="/rooms">Комнаты</RouterLink>
@@ -39,6 +40,7 @@ async function logout() {
 
     <footer v-if="!isImmersive" class="site-foot">
       <p class="links">
+        <RouterLink to="/public">Публичные комнаты</RouterLink>
         <RouterLink to="/about">О проекте</RouterLink>
         <RouterLink to="/privacy">Конфиденциальность</RouterLink>
         <RouterLink to="/terms">Условия</RouterLink>

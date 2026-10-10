@@ -6,6 +6,7 @@ import LandingView from "../views/LandingView.vue";
 import LegalView from "../views/LegalView.vue";
 import LoginView from "../views/LoginView.vue";
 import NotFoundView from "../views/NotFoundView.vue";
+import PublicRoomsView from "../views/PublicRoomsView.vue";
 import RoomCreateView from "../views/RoomCreateView.vue";
 import RoomListView from "../views/RoomListView.vue";
 import RoomPlayerView from "../views/RoomPlayerView.vue";
@@ -16,6 +17,7 @@ const router = createRouter({
   routes: [
     { path: "/", name: "landing", component: LandingView },
     { path: "/about", name: "about", component: AboutView },
+    { path: "/public", name: "public-rooms", component: PublicRoomsView },
     { path: "/login", name: "login", component: LoginView },
     { path: "/privacy", name: "privacy", component: LegalView },
     { path: "/terms", name: "terms", component: LegalView },

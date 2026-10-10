@@ -19,6 +19,7 @@ type HeartbeatHandler = (event: HeartbeatEvent) => void;
 type PresenceHandler = (event: PresenceUpdate) => void;
 type ChatHandler = (message: ChatMessageDto) => void;
 type VideoChangedHandler = (video: VideoAssetDto) => void;
+type StallHandler = (event: { roomId: string; waitingFor: string[] }) => void;
 
 export class RoomSocket {
   private socket: Socket | null = null;
@@ -91,6 +92,14 @@ export class RoomSocket {
 
   emitSeek(event: SeekEvent & { roomId: string }): void {
     this.socket?.emit(SocketEvents.PlayerSeek, event);
+  }
+
+  emitStall(roomId: string, stalled: boolean): void {
+    this.socket?.emit(SocketEvents.PlayerStall, { roomId, stalled });
+  }
+
+  onRoomStall(handler: StallHandler): void {
+    this.socket?.on(SocketEvents.RoomStall, handler);
   }
 
   sendChatMessage(roomId: string, body: string): void {

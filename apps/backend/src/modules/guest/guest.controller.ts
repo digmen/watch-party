@@ -34,7 +34,12 @@ export class GuestController {
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const session = await this.guests.createSession(dto.roomId, dto.displayName, request.cookies?.access_token);
+    const session = await this.guests.createSession(
+      dto.roomId,
+      dto.displayName,
+      request.cookies?.access_token,
+      dto.password,
+    );
 
     // Null tokens mean an existing session was reused — its cookies are already valid, and
     // re-issuing would needlessly rotate a real account's refresh token.
@@ -57,7 +62,10 @@ export class GuestController {
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const session = await this.guests.startRoom(dto.displayName, dto.roomName, request.cookies?.access_token);
+    const session = await this.guests.startRoom(dto.displayName, dto.roomName, request.cookies?.access_token, {
+      visibility: dto.visibility,
+      password: dto.password,
+    });
     if (session.tokens) {
       const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
       setAuthCookies(reply, session.tokens, isProduction);

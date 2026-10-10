@@ -3,8 +3,8 @@ import { onMounted, onUnmounted, ref, watch } from "vue";
 import Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
 
-const props = defineProps<{ src: string }>();
-const emit = defineEmits<{ toggle: [] }>();
+const props = defineProps<{ src: string; wantPlaying: boolean }>();
+const emit = defineEmits<{ toggle: []; stall: [stalled: boolean] }>();
 const videoEl = ref<HTMLVideoElement | null>(null);
 let hls: Hls | null = null;
 
@@ -23,6 +23,9 @@ function attach(src: string) {
       startPosition: 0,
       liveDurationInfinity: false,
       backBufferLength: 90,
+      // Keep a long runway ahead: a viewer on a shaky connection survives a dip instead of freezing.
+      maxBufferLength: 60,
+      maxMaxBufferLength: 180,
       // Segments are membership-gated by the session cookie. Same-origin in production this is
       // implicit, but a cross-origin API (local dev, a future separate API host) silently drops
       // cookies on XHR unless asked — and every playlist request comes back 401.
@@ -43,9 +46,67 @@ function attach(src: string) {
   }
 }
 
-onMounted(() => attach(props.src));
-watch(() => props.src, (next) => attach(next));
-onUnmounted(() => hls?.destroy());
+// --- "no picture, no playback" -------------------------------------------------------------
+// A stall is reported when the playhead has caught up with the buffer *during* playback, and
+// cleared only once a few seconds are buffered again (hysteresis, so it does not flap). The server
+// holds the whole room paused while anyone is stalled, so nobody sees time run on a frozen frame.
+const STALL_BELOW_SEC = 0.4;
+const RECOVER_ABOVE_SEC = 4;
+let stalledReported = false;
+let hasPlayed = false;
+let stallTimer: ReturnType<typeof setInterval> | null = null;
+
+function secondsBuffered(el: HTMLVideoElement): number {
+  const t = el.currentTime;
+  for (let i = 0; i < el.buffered.length; i++) {
+    if (t >= el.buffered.start(i) - 0.1 && t <= el.buffered.end(i)) return el.buffered.end(i) - t;
+  }
+  return 0;
+}
+
+function checkStall() {
+  const el = videoEl.value;
+  if (!el) return;
+  if (!el.paused && el.readyState >= 3 && el.currentTime > 0) hasPlayed = true;
+  const ahead = secondsBuffered(el);
+  const finished = el.duration > 0 && el.currentTime >= el.duration - 1.2 && !hlsStillGrowing();
+
+  if (!stalledReported) {
+    // Only mid-playback: a viewer who is still loading the first frames must not freeze a room
+    // that is already running.
+    if (props.wantPlaying && hasPlayed && !finished && ahead < STALL_BELOW_SEC) {
+      stalledReported = true;
+      emit("stall", true);
+    }
+  } else if (ahead >= RECOVER_ABOVE_SEC || finished) {
+    stalledReported = false;
+    emit("stall", false);
+  }
+}
+
+// An event playlist that has not been closed yet is still being downloaded: being at its edge is
+// a real stall, not the end of the film.
+function hlsStillGrowing(): boolean {
+  const live = hls?.levels?.[hls.currentLevel]?.details?.live;
+  return live === true;
+}
+
+onMounted(() => {
+  attach(props.src);
+  stallTimer = setInterval(checkStall, 400);
+});
+watch(
+  () => props.src,
+  (next) => {
+    hasPlayed = false;
+    attach(next);
+  },
+);
+onUnmounted(() => {
+  if (stallTimer) clearInterval(stallTimer);
+  if (stalledReported) emit("stall", false);
+  hls?.destroy();
+});
 
 // Absolute value (not the video element's own currentTime) so the same idempotent correction
 // can be re-applied every tick without drifting from repeated relative adjustments.

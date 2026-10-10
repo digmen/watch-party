@@ -15,6 +15,21 @@ export interface ResolvedPlayback {
   // the manifest/segment fetches in video-cache.service.ts, ffmpeg's `-i` for a direct remux — has
   // to carry these same headers, not just the initial resolution call.
   headers: Record<string, string>;
+  // A separate audio stream when the platform serves video and sound apart (YouTube above 360p).
+  // ffmpeg reads both and muxes them without re-encoding.
+  audioUrl?: string;
+  // A live broadcast has no end: it is captured into a growing playlist until the source stops.
+  isLive?: boolean;
+  title?: string;
+}
+
+interface ExtractorResult {
+  url: string;
+  audioUrl?: string;
+  headers: Record<string, string>;
+  isLive: boolean;
+  title?: string;
+  protocol?: string;
 }
 
 const EXTENSION_MAP: Array<[RegExp, ResolvedKind]> = [
@@ -28,15 +43,26 @@ const EXTENSION_MAP: Array<[RegExp, ResolvedKind]> = [
 // to yt-dlp's generic/"any site with a <video> tag" extractor: this is a resolver for a handful of
 // named platforms, not a general page-scraper (see NEEDS_EXTRACTION_MESSAGE in video.service.ts —
 // arbitrary-page extraction is an explicit non-goal of this MVP).
-const ALLOWED_EXTRACTOR_HOSTS = new Set([
+const EXTRACTOR_DOMAINS = [
   "ok.ru",
-  "www.ok.ru",
   "vk.com",
-  "www.vk.com",
-  "m.vk.com",
   "vkvideo.ru",
-  "www.vkvideo.ru",
-]);
+  "youtube.com",
+  "youtu.be",
+  "twitch.tv",
+  "tiktok.com",
+  "rutube.ru",
+  "dailymotion.com",
+  "dai.ly",
+  "x.com",
+  "twitter.com",
+];
+
+// H.264 + AAC only: those two copy straight into MPEG-TS segments (no transcoding, so no CPU cost
+// and no quality loss). VP9/AV1 + Opus — what YouTube serves for its best qualities — would need
+// re-encoding. Up to 1080p; falls back to whatever single file the site offers.
+const FORMAT_SELECTOR =
+  "bv*[height<=1080][vcodec^=avc1]+ba[acodec^=mp4a]/b[height<=1080][vcodec^=avc1]/b[height<=1080]/b";
 
 // ok.ru observed taking 40-90s in practice (its extractor does more than a single HTTP round
 // trip) — 20s was cutting it off mid-resolution. This runs inside an async BullMQ job / the
@@ -58,7 +84,8 @@ export class VideoResolverService {
 
   isExtractorHost(sourceUrl: string): boolean {
     try {
-      return ALLOWED_EXTRACTOR_HOSTS.has(new URL(sourceUrl).hostname);
+      const host = new URL(sourceUrl).hostname.toLowerCase();
+      return EXTRACTOR_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
     } catch {
       return false;
     }
@@ -76,8 +103,21 @@ export class VideoResolverService {
     if (this.isExtractorHost(sourceUrl)) {
       const resolved = await this.runYtDlp(sourceUrl);
       if (resolved) {
-        const resolvedKind = await this.classifyDirectUrl(resolved.url, resolved.headers);
-        if (resolvedKind) return { kind: resolvedKind, playbackUrl: resolved.url, headers: resolved.headers };
+        const base = { headers: resolved.headers, title: resolved.title };
+        // Two streams, or a live broadcast: both go through the ffmpeg remux path.
+        if (resolved.audioUrl || resolved.isLive) {
+          return {
+            ...base,
+            kind: "direct_mp4",
+            playbackUrl: resolved.url,
+            audioUrl: resolved.audioUrl,
+            isLive: resolved.isLive,
+          };
+        }
+        const resolvedKind =
+          (await this.classifyDirectUrl(resolved.url, resolved.headers)) ??
+          (resolved.protocol?.startsWith("m3u8") ? "hls" : "direct_mp4");
+        return { ...base, kind: resolvedKind, playbackUrl: resolved.url };
       }
     }
 
@@ -110,7 +150,7 @@ export class VideoResolverService {
       // -J (dump-single-json) instead of -g: a bare resolved URL isn't enough to actually fetch
       // it — ok.ru/vk's CDN 400s a request without a real browser User-Agent — so this needs
       // yt-dlp's "http_headers" alongside the URL, not just the URL.
-      return Bun.spawn(["yt-dlp", "-f", "best", "-J", "--no-warnings", sourceUrl], {
+      return Bun.spawn(["yt-dlp", "-f", FORMAT_SELECTOR, "--no-playlist", "-J", "--no-warnings", sourceUrl], {
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -122,7 +162,7 @@ export class VideoResolverService {
     }
   }
 
-  private async runYtDlp(sourceUrl: string): Promise<{ url: string; headers: Record<string, string> } | undefined> {
+  private async runYtDlp(sourceUrl: string): Promise<ExtractorResult | undefined> {
     const proc = this.spawnYtDlp(sourceUrl);
     if (!proc) return undefined;
 
@@ -142,9 +182,37 @@ export class VideoResolverService {
     }
 
     try {
-      const info = JSON.parse(stdout) as { url?: string; http_headers?: Record<string, string> };
+      const info = JSON.parse(stdout) as {
+        url?: string;
+        title?: string;
+        protocol?: string;
+        is_live?: boolean;
+        http_headers?: Record<string, string>;
+        requested_formats?: Array<{
+          url: string;
+          vcodec?: string;
+          acodec?: string;
+          http_headers?: Record<string, string>;
+        }>;
+      };
+      const base = { title: info.title, isLive: info.is_live === true };
+
+      const parts = info.requested_formats;
+      if (parts && parts.length >= 2) {
+        const video = parts.find((f) => f.vcodec && f.vcodec !== "none");
+        const audio = parts.find((f) => f.acodec && f.acodec !== "none" && f !== video);
+        if (video && audio) {
+          return {
+            ...base,
+            url: video.url,
+            audioUrl: audio.url,
+            headers: video.http_headers ?? info.http_headers ?? {},
+          };
+        }
+      }
+
       if (!info.url) return undefined;
-      return { url: info.url, headers: info.http_headers ?? {} };
+      return { ...base, url: info.url, headers: info.http_headers ?? {}, protocol: info.protocol };
     } catch (err) {
       this.logger.warn(`yt-dlp returned unparseable JSON for ${sourceUrl}: ${(err as Error).message}`);
       return undefined;

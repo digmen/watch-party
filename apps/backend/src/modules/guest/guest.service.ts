@@ -44,14 +44,22 @@ export class GuestService {
     private readonly config: ConfigService<Env, true>,
   ) {}
 
-  async createSession(roomId: string, displayName: string, existingAccessToken?: string): Promise<GuestSession> {
+  async createSession(
+    roomId: string,
+    displayName: string,
+    existingAccessToken?: string,
+    password?: string,
+  ): Promise<GuestSession> {
     // Throws NotFoundException if the room doesn't exist. The UUID *is* the invite credential, so
     // "does this room exist" is inherently observable — but guessing a v4 UUID isn't feasible.
     const room = await this.rooms.findById(roomId);
     if (!room.isActive) throw new ForbiddenException("Комната больше не активна");
 
-    const reused = await this.reuseExistingSession(roomId, displayName, existingAccessToken);
+    const reused = await this.reuseExistingSession(roomId, displayName, existingAccessToken, password);
     if (reused) return { user: reused, room, tokens: null };
+
+    // Before any row is created: a wrong password must not leave a guest account behind.
+    await this.rooms.assertMayEnter(room, null, password);
 
     await this.assertBurstAllowed(roomId);
     await this.assertRoomHasSpace(roomId);
@@ -79,6 +87,7 @@ export class GuestService {
     displayName: string,
     roomName: string | undefined,
     existingAccessToken?: string,
+    options: { visibility?: "public" | "private"; password?: string } = {},
   ): Promise<GuestSession> {
     const existing = await this.findLiveSessionUser(existingAccessToken);
     if (existing?.isGuest && existing.guestRoomId) {
@@ -87,7 +96,7 @@ export class GuestService {
     }
     if (existing && !existing.isGuest) {
       // A real account asked for a quick room: give them one under their own account.
-      const room = await this.rooms.create(existing.id, roomName ?? `Комната ${existing.displayName}`);
+      const room = await this.rooms.create(existing.id, roomName ?? `Комната ${existing.displayName}`, options);
       return { user: existing, room, tokens: null };
     }
 
@@ -98,9 +107,17 @@ export class GuestService {
         .insert(users)
         .values({ email: null, passwordHash: null, displayName, isGuest: true })
         .returning();
+      const passwordHash = options.password
+        ? await Bun.password.hash(options.password, { algorithm: "argon2id" })
+        : null;
       const [createdRoom] = await tx
         .insert(rooms)
-        .values({ name: roomName ?? `Комната ${displayName}`, ownerId: created.id })
+        .values({
+          name: roomName ?? `Комната ${displayName}`,
+          ownerId: created.id,
+          visibility: options.visibility ?? "private",
+          passwordHash,
+        })
         .returning();
       await tx.insert(roomMembers).values({ roomId: createdRoom.id, userId: created.id, role: "owner" });
       const [scoped] = await tx
@@ -148,6 +165,7 @@ export class GuestService {
     roomId: string,
     displayName: string,
     accessToken?: string,
+    password?: string,
   ): Promise<User | undefined> {
     if (!accessToken) return undefined;
 
@@ -166,7 +184,7 @@ export class GuestService {
 
     if (!existing.isGuest) {
       // A real account: join them normally instead of downgrading them to a guest.
-      await this.rooms.join(roomId, existing.id);
+      await this.rooms.join(roomId, existing.id, password);
       return existing;
     }
 

@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { ref } from "vue";
 
-const props = defineProps<{ submitting: boolean; error: string | null }>();
-const emit = defineEmits<{ submit: [displayName: string] }>();
+const props = defineProps<{ submitting: boolean; error: string | null; requiresPassword?: boolean }>();
+const emit = defineEmits<{ submit: [displayName: string, password: string] }>();
 
 const displayName = ref("");
+const password = ref("");
 
 function submit() {
   const name = displayName.value.trim();
-  if (name) emit("submit", name);
+  if (name) emit("submit", name, password.value);
 }
 </script>
 
@@ -26,6 +27,15 @@ function submit() {
         autofocus
         placeholder="Как вас зовут?"
         aria-label="Ваше имя"
+      />
+      <input
+        v-if="props.requiresPassword"
+        v-model="password"
+        type="password"
+        required
+        autocomplete="off"
+        placeholder="Пароль комнаты"
+        aria-label="Пароль комнаты"
       />
       <button type="submit" :disabled="props.submitting || !displayName.trim()">
         {{ props.submitting ? "Заходим…" : "Смотреть" }}

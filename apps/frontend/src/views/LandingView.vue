@@ -1,13 +1,25 @@
 <script setup lang="ts">
 import { useHead } from "@unhead/vue";
-import { ref } from "vue";
+import type { PublicRoomDto } from "@watch-party/shared";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { API_ORIGIN } from "../api/client";
+import { roomsApi } from "../api/rooms.api";
+import PublicRoomList from "../components/PublicRoomList.vue";
 import { usePageSeo } from "../seo";
 import { useAuthStore } from "../stores/auth.store";
 
 const auth = useAuthStore();
 const router = useRouter();
+
+const publicRooms = ref<PublicRoomDto[]>([]);
+onMounted(async () => {
+  try {
+    publicRooms.value = (await roomsApi.publicList(10)).rooms;
+  } catch {
+    // The list is a bonus; the landing page works without it.
+  }
+});
 
 const displayName = ref("");
 const starting = ref(false);
@@ -26,7 +38,7 @@ const faq = [
   },
   {
     q: "Что можно смотреть?",
-    a: "Прямые ссылки на видеофайлы (.mp4, .m3u8), а также видео с ok.ru и VK Видео. YouTube, Netflix, Кинопоиск и подобные сервисы не поддерживаются: у них закрытые плееры.",
+    a: "YouTube, Twitch (в том числе прямые эфиры), TikTok, VK Видео, ok.ru, Rutube, Dailymotion и прямые ссылки на видеофайлы (.mp4, .m3u8). Страницы онлайн-кинотеатров и платные сервисы вроде Netflix не поддерживаются.",
   },
   {
     q: "Как работает синхронизация?",
@@ -90,7 +102,7 @@ function continueWithGoogle() {
       <p class="pill"><span class="dot"></span> Бесплатно · без регистрации · прямо в браузере</p>
       <h1>Кино на двоих.<br /><span class="grad">Даже когда вы далеко.</span></h1>
       <p class="lede">
-        Вставьте ссылку на фильм, отправьте комнату другу — и вы на одной секунде. Пауза у одного
+        Вставьте ссылку на видео или трансляцию, отправьте комнату другу — и вы на одной секунде. Пауза у одного
         останавливает у всех, рядом идёт чат.
       </p>
 
@@ -144,6 +156,14 @@ function continueWithGoogle() {
       </div>
     </section>
 
+    <section v-if="publicRooms.length > 0" class="block live">
+      <div class="live-head">
+        <h2>Сейчас в публичных комнатах</h2>
+        <RouterLink to="/public">Все комнаты →</RouterLink>
+      </div>
+      <PublicRoomList :rooms="publicRooms" />
+    </section>
+
     <section id="how" class="block">
       <h2>Три шага до совместного вечера</h2>
       <ol class="steps">
@@ -155,7 +175,7 @@ function continueWithGoogle() {
         <li>
           <span class="num">2</span>
           <h3>Вставьте видео</h3>
-          <p>Ссылка на файл, ok.ru или VK Видео — сервис подготовит его для всех.</p>
+          <p>Ссылка на YouTube, Twitch, TikTok, VK или файл — сервис подготовит её для всех.</p>
         </li>
         <li>
           <span class="num">3</span>
@@ -462,6 +482,21 @@ h1 {
   font-size: var(--text-2xl);
   text-align: center;
   margin-bottom: var(--space-6);
+}
+.live-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-5);
+}
+.live-head h2 {
+  margin: 0;
+  text-align: left;
+}
+.live-head a {
+  font-size: var(--text-sm);
 }
 .narrow {
   max-width: 40rem;
