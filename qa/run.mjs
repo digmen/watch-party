@@ -388,7 +388,7 @@ const SCENARIOS = {
       await page.fill(t("landing-name"), "Телефон");
       await page.click(t("landing-start"));
       await page.waitForURL(/\/rooms\//);
-      await sleep(1000);
+      await page.waitForSelector(t("chat-input"), { timeout: 30000 });
       const m = await page.evaluate(() => ({
         overflow: document.documentElement.scrollWidth - innerWidth,
         input: !!document.querySelector('[data-testid="chat-input"]'),
