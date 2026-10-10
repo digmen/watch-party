@@ -264,12 +264,15 @@ const SCENARIOS = {
     }
   },
 
-  async "iphone-webkit"() {
+  // Playwright's WebKit build for Windows has neither MSE nor native HLS, so real Safari playback
+  // cannot be proven here. What this does prove: the iPhone-sized UI, joining, chat both ways with
+  // a Chromium host, no horizontal scroll — and that a browser which cannot play says so.
+  async "webkit-ui"() {
     check(WEBKIT, "WebKit не найден (QA_WEBKIT)");
     const b = await webkit.launch({ executablePath: WEBKIT });
+    const hb = await launch();
     try {
-      const host = await newViewer(await launch());
-      // Host in Chromium creates the room; the iPhone joins as a guest.
+      const host = await newViewer(hb);
       const url = await createRoomAsHost(host.page);
       await addVideo(host.page);
       const ctx = await b.newContext({ ...devices["iPhone 13"] });
@@ -278,13 +281,34 @@ const SCENARIOS = {
       await page.fill(t("guest-name"), "iPhone");
       await page.click(t("guest-submit"));
       await page.waitForSelector(t("video"), { timeout: 90000 });
+      await page.fill(t("chat-input"), "привет с айфона");
+      await page.click(t("chat-send"));
+      const gotIt = await waitFor(
+        async () => (await host.page.locator(t("chat-log")).innerText()).includes("привет с айфона"),
+        15000,
+      );
+      check(gotIt, "сообщение с iPhone не дошло до хозяина");
+      const media = await page.evaluate(() => {
+        const v = document.querySelector("video");
+        return {
+          mse: typeof window.MediaSource !== "undefined" || typeof window.ManagedMediaSource !== "undefined",
+          hls: !!v.canPlayType("application/vnd.apple.mpegurl"),
+        };
+      });
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - innerWidth);
+      check(overflow <= 0, `горизонтальная прокрутка ${overflow}px`);
+      if (!media.mse && !media.hls) {
+        check((await page.locator(t("unsupported")).count()) > 0, "браузер не умеет видео, но не сообщает об этом");
+        return "UI и чат ок; в этой сборке WebKit нет медиа — показано сообщение «браузер не поддерживает» (воспроизведение Safari проверить нельзя)";
+      }
       await host.page.click(t("play-toggle"));
       await sleep(8000);
       const f = await state(page);
       check(f && f.w > 0 && f.t > 2, `iPhone: нет кадра/времени ${JSON.stringify(f)}`);
-      return `Safari/iPhone играет: ${f.w}px, ${f.t.toFixed(1)} с`;
+      return `Safari играет: ${f.w}px, ${f.t.toFixed(1)} с`;
     } finally {
       await b.close();
+      await hb.close();
     }
   },
 

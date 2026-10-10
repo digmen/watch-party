@@ -4,7 +4,7 @@ import Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
 
 const props = defineProps<{ src: string; wantPlaying: boolean }>();
-const emit = defineEmits<{ toggle: []; stall: [stalled: boolean] }>();
+const emit = defineEmits<{ toggle: []; stall: [stalled: boolean]; unsupported: [] }>();
 const videoEl = ref<HTMLVideoElement | null>(null);
 let hls: Hls | null = null;
 
@@ -43,6 +43,9 @@ function attach(src: string) {
   } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
     // Safari plays HLS natively — no hls.js needed there.
     el.src = src;
+  } else {
+    // Neither MSE nor native HLS: nothing will ever play. Say so instead of showing a dead player.
+    emit("unsupported");
   }
 }
 

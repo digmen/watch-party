@@ -24,6 +24,7 @@ const durationSec = ref(0);
 const volume = ref(1);
 const muted = ref(false);
 const dragSec = ref<number | null>(null);
+const unsupported = ref(false);
 
 // Controls live on top of the picture and fade out while playing, like every real player.
 const controlsVisible = ref(true);
@@ -135,7 +136,18 @@ defineExpose({
     @pointerdown="wake"
     @dblclick.prevent="toggleFullscreen"
   >
-    <VideoPlayer ref="video" :src="src" :want-playing="playing" @toggle="emit('toggle')" @stall="emit('stall', $event)" />
+    <VideoPlayer
+      ref="video"
+      :src="src"
+      :want-playing="playing"
+      @toggle="emit('toggle')"
+      @stall="emit('stall', $event)"
+      @unsupported="unsupported = true"
+    />
+
+    <div v-if="unsupported" class="unsupported" data-testid="unsupported" role="alert">
+      Этот браузер не умеет воспроизводить потоковое видео. Откройте комнату в Chrome, Safari (iOS 17.1+), Firefox или Edge.
+    </div>
 
     <div v-if="waitingFor.length > 0" class="waiting" data-testid="waiting-banner" role="status">
       <span class="spinner" aria-hidden="true"></span>
@@ -217,6 +229,16 @@ defineExpose({
   border-radius: 0;
   box-shadow: none;
   object-fit: contain;
+}
+.unsupported {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-5);
+  text-align: center;
+  background: rgb(10 13 18 / 0.92);
+  z-index: 5;
 }
 .big-play {
   position: absolute;
