@@ -1,7 +1,7 @@
 import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { and, count, desc, eq, gt } from "drizzle-orm";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
-import { type Room, roomMembers, roomVideos, rooms, users, videoAssets } from "../../database/schema";
+import { type Room, roomMembers, rooms, roomVideos, users, videoAssets } from "../../database/schema";
 
 export interface RoomMemberRow {
   userId: string;

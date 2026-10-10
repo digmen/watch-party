@@ -25,8 +25,8 @@ import { ChatService } from "../chat/chat.service";
 import { RoomsService } from "../rooms/rooms.service";
 import { PlaybackStateService } from "./playback-state.service";
 import { PresenceService } from "./presence.service";
-import { StallService } from "./stall.service";
 import { parseCookieHeader } from "./socket-cookie.util";
+import { StallService } from "./stall.service";
 
 const HEARTBEAT_INTERVAL_MS = 7000;
 const HEARTBEAT_LOCK_TTL_SEC = 5;
