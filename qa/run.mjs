@@ -112,36 +112,43 @@ const SCENARIOS = {
       const url = await createRoomAsHost(host.page);
       await addVideo(host.page);
       const friend = await newViewer(b);
+      // From a chosen moment the friend's segment requests hang (a dead mobile network, a lift).
+      // Throttling by bandwidth would prove nothing on a low-bitrate clip, so the hold is explicit.
+      let hold = false;
+      await friend.page.route("**/video/proxy/**", async (route) => {
+        if (hold && /\.(ts|m4s)(\?|$)/.test(route.request().url())) await sleep(75000);
+        return route.continue().catch(() => {});
+      });
       await joinAsGuest(friend.page, url, "Друг");
       await host.page.click(t("play-toggle"));
       await sleep(5000);
 
-      // ~600 kbit/s, 400 ms RTT: the stream (several Mbit/s) cannot keep up.
-      const cdp = await friend.ctx.newCDPSession(friend.page);
-      await cdp.send("Network.enable");
-      await cdp.send("Network.emulateNetworkConditions", {
-        offline: false,
-        latency: 400,
-        downloadThroughput: (600 * 1024) / 8,
-        uploadThroughput: (200 * 1024) / 8,
-      });
-      const banner = await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) > 0, 90000);
+      hold = true;
+      // Jump far beyond what the friend has buffered: his player must go and fetch, and cannot.
+      await host.page.evaluate((sel) => {
+        const r = document.querySelector(sel);
+        r.value = String(Math.min(Number(r.max) - 5, 400));
+        r.dispatchEvent(new Event("input", { bubbles: true }));
+        r.dispatchEvent(new Event("change", { bubbles: true }));
+      }, t("seek"));
+      const banner = await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) > 0, 45000);
       check(banner, "комната не встала на паузу, пока у друга нет кадров");
+      await sleep(1500);
       const paused = await state(host.page);
       check(paused.paused, "хозяин не на паузе во время ожидания");
-
-      await cdp.send("Network.emulateNetworkConditions", {
-        offline: false,
-        latency: 0,
-        downloadThroughput: -1,
-        uploadThroughput: -1,
-      });
-      const resumed = await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) === 0, 90000);
-      check(resumed, "комната не продолжила после улучшения сети");
+      const frozenAt = paused.t;
       await sleep(4000);
+      check(Math.abs((await state(host.page)).t - frozenAt) < 0.5, "время ушло вперёд, пока комната ждёт");
+
+      hold = false;
+      await friend.page.unroute("**/video/proxy/**");
+      const resumed = await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) === 0, 90000);
+      check(resumed, "комната не продолжила после возврата сети");
+      await sleep(5000);
       const [h, f] = [await state(host.page), await state(friend.page)];
+      check(!h.paused, "комната не поехала дальше");
       check(Math.abs(h.t - f.t) < 1.5, `рассинхрон после ожидания: ${h.t} vs ${f.t}`);
-      return `пауза с баннером → продолжили, расхождение ${Math.abs(h.t - f.t).toFixed(2)} с`;
+      return `пауза с баннером на ${frozenAt.toFixed(0)} с → продолжили, расхождение ${Math.abs(h.t - f.t).toFixed(2)} с`;
     } finally {
       await b.close();
     }

@@ -11,7 +11,6 @@ COPY server.mjs ./
 # Unprivileged: the browser runs untrusted pages.
 RUN useradd -m sniff && chown -R sniff /app /home/sniff
 USER sniff
-# The browser was installed for root; make it readable and tell playwright where it lives.
-ENV NODE_ENV=production PORT=4000 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV NODE_ENV=production PORT=4000
 EXPOSE 4000
 CMD ["node", "server.mjs"]
