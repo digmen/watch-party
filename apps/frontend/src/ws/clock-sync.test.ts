@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { ClockSync, computeDriftCorrection, expectedPosition } from "./clock-sync";
+import { ClockSync, computeDriftCorrection, expectedPosition, isNewerVersion } from "./clock-sync";
 
 describe("expectedPosition", () => {
   test("stays put while paused regardless of elapsed time", () => {
@@ -64,5 +64,18 @@ describe("ClockSync", () => {
     sync.recordSample(0, 200, 10); // offset ~195
     sync.recordSample(0, 200, 10); // offset ~195
     expect(sync.offsetMs).toBeCloseTo(195, 0);
+  });
+});
+
+describe("isNewerVersion", () => {
+  test("accepts equal and newer, rejects older", () => {
+    expect(isNewerVersion(5, 5)).toBe(true);
+    expect(isNewerVersion(6, 5)).toBe(true);
+    expect(isNewerVersion(4, 5)).toBe(false);
+  });
+
+  test("accepts anything when either side has no version (old server / local update)", () => {
+    expect(isNewerVersion(undefined, 5)).toBe(true);
+    expect(isNewerVersion(3, undefined)).toBe(true);
   });
 });

@@ -1,12 +1,4 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  HttpException,
-  HttpStatus,
-  Inject,
-  Injectable,
-  Logger,
-} from "@nestjs/common";
+import { ForbiddenException, HttpException, HttpStatus, Inject, Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
 import { and, eq } from "drizzle-orm";
@@ -63,41 +55,60 @@ export class GuestService {
 
     await this.assertBurstAllowed(roomId);
     await this.assertRoomHasSpace(roomId);
-    await this.assertNameAvailable(roomId, displayName);
+    const name = await this.uniqueName(roomId, displayName);
 
     // One transaction: a failed membership insert must not leave an orphan user row behind.
     const user = await this.db.transaction(async (tx) => {
       const [created] = await tx
         .insert(users)
-        .values({ email: null, passwordHash: null, displayName, isGuest: true, guestRoomId: roomId })
+        .values({ email: null, passwordHash: null, displayName: name, isGuest: true, guestRoomId: roomId })
         .returning();
       await tx.insert(roomMembers).values({ roomId, userId: created.id, role: "member" }).onConflictDoNothing();
       return created;
     });
 
-    this.logger.log(`guest ${user.id} (${displayName}) joined room ${roomId}`);
+    this.logger.log(`guest ${user.id} (${name}) joined room ${roomId}`);
     return { user, room, tokens: await this.auth.issueTokenPair(user) };
   }
 
-  // "Just start watching": a guest who hosts. Creates the guest, the room they own and the
-  // membership in one transaction, so there is never a guest without a room or a room without an
-  // owner. Reloading the page must not mint a second room — an existing guest session whose room
-  // is still active is returned as-is.
+  // "Just start watching": a guest who hosts. "Create room" always makes a NEW room — the same visitor
+  // may create as many as they like, with any (repeating) names. Protection against double submits
+  // and retried requests is an idempotency key from the client, not "reuse the previous room".
   async startRoom(
     displayName: string,
     roomName: string | undefined,
     existingAccessToken?: string,
     options: { visibility?: "public" | "private"; password?: string } = {},
+    idempotencyKey?: string,
   ): Promise<GuestSession> {
-    const existing = await this.findLiveSessionUser(existingAccessToken);
-    if (existing?.isGuest && existing.guestRoomId) {
-      const room = await this.rooms.findById(existing.guestRoomId).catch(() => null);
-      if (room?.isActive && room.ownerId === existing.id) return { user: existing, room, tokens: null };
+    if (idempotencyKey) {
+      const hit = await this.redis.get(`idem:start:${idempotencyKey}`);
+      if (hit) {
+        const { roomId, userId } = JSON.parse(hit) as { roomId: string; userId: string };
+        const [room, user] = await Promise.all([
+          this.rooms.findById(roomId).catch(() => null),
+          this.users.findById(userId),
+        ]);
+        if (room && user) return { user, room, tokens: null };
+      }
     }
-    if (existing && !existing.isGuest) {
-      // A real account asked for a quick room: give them one under their own account.
-      const room = await this.rooms.create(existing.id, roomName ?? `Комната ${existing.displayName}`, options);
-      return { user: existing, room, tokens: null };
+
+    const existing = await this.findLiveSessionUser(existingAccessToken);
+    if (existing) {
+      await this.rooms.assertMayCreate(existing.id, existing.isGuest);
+      const room = await this.rooms.create(existing.id, roomName ?? `Комната ${displayName}`, options);
+      let user = existing;
+      if (existing.isGuest) {
+        // Same person, new room: keep their guest account (and name — they just typed it), point
+        // "my latest room" at the new one.
+        [user] = await this.db
+          .update(users)
+          .set({ guestRoomId: room.id, displayName })
+          .where(eq(users.id, existing.id))
+          .returning();
+      }
+      await this.rememberStart(idempotencyKey, room.id, user.id);
+      return { user, room, tokens: null };
     }
 
     await this.assertStartAllowed();
@@ -129,7 +140,12 @@ export class GuestService {
     });
 
     this.logger.log(`guest ${user.id} (${displayName}) started room ${room.id}`);
+    await this.rememberStart(idempotencyKey, room.id, user.id);
     return { user, room, tokens: await this.auth.issueTokenPair(user) };
+  }
+
+  private async rememberStart(key: string | undefined, roomId: string, userId: string): Promise<void> {
+    if (key) await this.redis.set(`idem:start:${key}`, JSON.stringify({ roomId, userId }), "EX", 60);
   }
 
   private async findLiveSessionUser(accessToken?: string): Promise<User | undefined> {
@@ -188,7 +204,8 @@ export class GuestService {
       return existing;
     }
 
-    if (existing.guestRoomId !== roomId) return undefined; // guest of a different room — new session
+    // A guest of another room is the same person opening a second link: join them here, keep one account.
+    await this.rooms.join(roomId, existing.id, password);
 
     if (existing.displayName !== displayName) {
       const [updated] = await this.db.update(users).set({ displayName }).where(eq(users.id, existing.id)).returning();
@@ -221,11 +238,15 @@ export class GuestService {
     }
   }
 
-  // Without this a guest could take the host's exact name and be indistinguishable from them in
-  // chat and the presence list.
-  private async assertNameAvailable(roomId: string, displayName: string): Promise<void> {
-    const members = await this.rooms.listMembers(roomId);
-    const taken = members.some((m) => m.displayName.toLowerCase() === displayName.toLowerCase());
-    if (taken) throw new ConflictException("Это имя в комнате уже занято — выберите другое");
+  // Two people called "Макс" in one room would be indistinguishable in chat and the member list, but
+  // that is no reason to refuse the second one: they become "Макс (2)".
+  private async uniqueName(roomId: string, displayName: string): Promise<string> {
+    const taken = new Set((await this.rooms.listMembers(roomId)).map((m) => m.displayName.toLowerCase()));
+    if (!taken.has(displayName.toLowerCase())) return displayName;
+    for (let i = 2; i < 100; i++) {
+      const candidate = `${displayName} (${i})`;
+      if (!taken.has(candidate.toLowerCase())) return candidate;
+    }
+    return `${displayName} (${Date.now() % 1000})`;
   }
 }

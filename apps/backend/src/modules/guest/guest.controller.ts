@@ -62,10 +62,15 @@ export class GuestController {
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
-    const session = await this.guests.startRoom(dto.displayName, dto.roomName, request.cookies?.access_token, {
-      visibility: dto.visibility,
-      password: dto.password,
-    });
+    const rawKey = request.headers["idempotency-key"];
+    const idempotencyKey = typeof rawKey === "string" && /^[\w-]{8,64}$/.test(rawKey) ? rawKey : undefined;
+    const session = await this.guests.startRoom(
+      dto.displayName,
+      dto.roomName,
+      request.cookies?.access_token,
+      { visibility: dto.visibility, password: dto.password },
+      idempotencyKey,
+    );
     if (session.tokens) {
       const isProduction = this.config.get("NODE_ENV", { infer: true }) === "production";
       setAuthCookies(reply, session.tokens, isProduction);

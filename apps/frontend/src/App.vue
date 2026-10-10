@@ -28,11 +28,12 @@ async function logout() {
       <nav>
         <RouterLink to="/public">Публичные комнаты</RouterLink>
         <RouterLink to="/about">О проекте</RouterLink>
-        <template v-if="auth.isAuthenticated && !auth.isGuest">
-          <RouterLink to="/rooms">Комнаты</RouterLink>
-          <button class="quiet" @click="logout">Выйти</button>
+        <template v-if="auth.isAuthenticated">
+          <RouterLink to="/rooms">Мои комнаты</RouterLink>
+          <RouterLink v-if="auth.isGuest" to="/login">Войти</RouterLink>
+          <button v-else class="quiet" @click="logout">Выйти</button>
         </template>
-        <RouterLink v-else-if="!auth.isAuthenticated" to="/login">Войти</RouterLink>
+        <RouterLink v-else to="/login">Войти</RouterLink>
       </nav>
     </header>
 

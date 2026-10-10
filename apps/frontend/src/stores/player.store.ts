@@ -1,6 +1,6 @@
 import type { PauseEvent, PlayEvent, PresenceUpdate, SeekEvent, VideoAssetDto } from "@watch-party/shared";
 import { defineStore } from "pinia";
-import { expectedPosition, type RoomPlaybackState } from "../ws/clock-sync";
+import { expectedPosition, isNewerVersion, type RoomPlaybackState } from "../ws/clock-sync";
 import { roomSocket } from "../ws/room-socket";
 
 interface PresenceMember {
@@ -21,7 +21,7 @@ export const usePlayerStore = defineStore("player", {
     roomId: null,
     members: [],
     waitingFor: [],
-    playback: { status: "paused", positionSec: 0, updatedAtMs: 0 },
+    playback: { status: "paused", positionSec: 0, updatedAtMs: 0, version: 0 },
   }),
 
   actions: {
@@ -47,7 +47,14 @@ export const usePlayerStore = defineStore("player", {
       roomSocket.onPause((event) => this.applyEvent(event as PauseEvent, "paused"));
       roomSocket.onSeek((event) => this.applyEvent(event as SeekEvent, this.playback.status));
       roomSocket.onHeartbeat((event) => {
-        this.playback = { status: event.status, positionSec: event.positionSec, updatedAtMs: event.serverTimestampMs };
+        // A heartbeat computed before a pause can still arrive after it; its version gives it away.
+        if (!isNewerVersion(event.version, this.playback.version)) return;
+        this.playback = {
+          status: event.status,
+          positionSec: event.positionSec,
+          updatedAtMs: event.serverTimestampMs,
+          version: event.version ?? this.playback.version,
+        };
       });
 
       // After a network drop the room is re-joined automatically; adopt the state it reports and
@@ -67,8 +74,17 @@ export const usePlayerStore = defineStore("player", {
       roomSocket.onVideoChanged(handler);
     },
 
-    applyEvent(event: { positionSec: number; originTimestampMs: number }, status: "playing" | "paused") {
-      this.playback = { status, positionSec: event.positionSec, updatedAtMs: event.originTimestampMs };
+    applyEvent(
+      event: { positionSec: number; originTimestampMs: number; version?: number },
+      status: "playing" | "paused",
+    ) {
+      if (!isNewerVersion(event.version, this.playback.version)) return;
+      this.playback = {
+        status,
+        positionSec: event.positionSec,
+        updatedAtMs: event.originTimestampMs,
+        version: event.version ?? this.playback.version,
+      };
     },
 
     play(userId: string) {

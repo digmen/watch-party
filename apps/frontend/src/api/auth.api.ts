@@ -15,6 +15,12 @@ export const authApi = {
   joinAsGuest: (dto: GuestJoinDto) =>
     apiFetch<{ user: UserDto; room: RoomDto }>("/auth/guest", { method: "POST", body: dto }),
   // Guest hosts a brand-new room — no account, no room id yet.
+  // The key is fixed per call, so the request apiFetch silently repeats (CSRF/401 retry) cannot create
+  // a second room — while two separate "create" clicks (two calls) get two rooms.
   startAsGuest: (dto: GuestStartDto) =>
-    apiFetch<{ user: UserDto; room: RoomDto }>("/auth/guest/start", { method: "POST", body: dto }),
+    apiFetch<{ user: UserDto; room: RoomDto }>("/auth/guest/start", {
+      method: "POST",
+      body: dto,
+      headers: { "Idempotency-Key": crypto.randomUUID() },
+    }),
 };

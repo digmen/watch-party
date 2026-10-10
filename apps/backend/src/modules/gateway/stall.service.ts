@@ -48,13 +48,22 @@ export class StallService {
     return alive;
   }
 
-  async markAutoPaused(roomId: string): Promise<void> {
-    await this.redis.set(this.autoPausedKey(roomId), "1", "EX", 3600);
+  // Remembers WHICH playback version the system paused. The room is resumed later only if nobody has
+  // touched it since (a person pressing pause/play/seek makes the version move on).
+  async markAutoPaused(roomId: string, version: number): Promise<void> {
+    await this.redis.set(this.autoPausedKey(roomId), String(version), "EX", 3600);
   }
 
-  // True exactly once per auto-pause, so only one caller resumes the room.
-  async consumeAutoPaused(roomId: string): Promise<boolean> {
-    return (await this.redis.del(this.autoPausedKey(roomId))) === 1;
+  // Returns the version that was auto-paused, or null. Deleting makes it single-use, so only one
+  // caller resumes the room.
+  async consumeAutoPaused(roomId: string): Promise<number | null> {
+    const value = await this.redis.getdel(this.autoPausedKey(roomId));
+    return value === null ? null : Number(value);
+  }
+
+  // A new video starts clean: nobody is being waited for, no pending auto-resume.
+  async clearAll(roomId: string): Promise<void> {
+    await this.redis.del(this.stallKey(roomId), this.autoPausedKey(roomId));
   }
 
   async isAutoPaused(roomId: string): Promise<boolean> {

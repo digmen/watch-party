@@ -153,6 +153,8 @@ export class VideoService implements OnModuleInit {
     }
 
     await this.db.insert(roomVideos).values({ roomId, videoAssetId: asset.id, addedBy: userId });
+    // The new film starts from 0:00, stopped — not from wherever the previous one was.
+    await this.gateway.resetPlayback(roomId);
     // Everyone already in the room switches to the new video immediately — including the case
     // where it's still `pending`, so their UI shows "preparing" instead of the previous film.
     this.gateway.broadcastVideoChanged(roomId, toVideoAssetDto(asset));

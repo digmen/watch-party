@@ -82,6 +82,26 @@ function sendFromOverlay() {
   chatDraft.value = "";
 }
 
+// One click on the picture toggles play/pause — but a double click (fullscreen) must not also toggle
+// twice, so a single click waits a moment to see whether a second one follows.
+let clickTimer: ReturnType<typeof setTimeout> | null = null;
+function onVideoClick() {
+  if (clickTimer) return;
+  clickTimer = setTimeout(() => {
+    clickTimer = null;
+    emit("toggle");
+  }, 250);
+}
+function onDoubleClick(event: MouseEvent) {
+  // Only a double click on the picture itself; double-clicking a button or the seek bar is not "fullscreen".
+  if ((event.target as HTMLElement).tagName !== "VIDEO") return;
+  if (clickTimer) {
+    clearTimeout(clickTimer);
+    clickTimer = null;
+  }
+  toggleFullscreen();
+}
+
 function fmt(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
   const h = Math.floor(s / 3600);
@@ -134,13 +154,13 @@ defineExpose({
     :class="{ fs: inFullscreen, pseudo: pseudoFullscreen, 'show-controls': controlsVisible || !playing }"
     @pointermove="wake"
     @pointerdown="wake"
-    @dblclick.prevent="toggleFullscreen"
+    @dblclick.prevent="onDoubleClick"
   >
     <VideoPlayer
       ref="video"
       :src="src"
       :want-playing="playing"
-      @toggle="emit('toggle')"
+      @toggle="onVideoClick"
       @stall="emit('stall', $event)"
       @unsupported="unsupported = true"
     />

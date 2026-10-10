@@ -70,7 +70,15 @@ async function joinAsGuest(page, roomUrl, name) {
 const state = (page) =>
   page.evaluate(() => {
     const v = document.querySelector("video");
-    return v ? { t: +v.currentTime.toFixed(2), paused: v.paused, rs: v.readyState, w: v.videoWidth } : null;
+    return v
+      ? {
+          t: +v.currentTime.toFixed(2),
+          paused: v.paused,
+          rs: v.readyState,
+          w: v.videoWidth,
+          dur: Math.round(v.duration || 0),
+        }
+      : null;
   });
 
 async function waitFor(fn, ms = 30000, step = 400) {
@@ -384,6 +392,175 @@ const SCENARIOS = {
       const box = await page.locator(t("chat-input")).boundingBox();
       check(box && box.y + box.height <= 915, "поле ввода вне экрана");
       return "без горизонтальной прокрутки, поле чата на экране";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // A guest who is already in one room must be able to open another (the old build pinned a guest
+  // to a single room and answered 403 — shown to people as "could not enter the room").
+  async "guest-two-rooms"() {
+    const b = await launch();
+    try {
+      const hostA = await newViewer(b);
+      const urlA = await createRoomAsHost(hostA.page);
+      const hostB = await newViewer(b);
+      const urlB = await createRoomAsHost(hostB.page);
+      const g = await newViewer(b);
+      await g.page.goto(urlA, { waitUntil: "networkidle" });
+      await g.page.fill(t("guest-name"), "Гость");
+      await g.page.click(t("guest-submit"));
+      await g.page.waitForSelector(t("chat-input"), { timeout: 30000 });
+      await g.page.goto(urlB, { waitUntil: "networkidle" });
+      const inB = await waitFor(async () => (await g.page.locator(t("chat-input")).count()) > 0, 20000);
+      check(inB, `гость не смог зайти во вторую комнату: ${(await g.page.innerText("body")).slice(0, 140)}`);
+      await g.page.goto(urlA, { waitUntil: "networkidle" });
+      const backA = await waitFor(async () => (await g.page.locator(t("chat-input")).count()) > 0, 20000);
+      check(backA, "гость не смог вернуться в первую комнату");
+      return "один гость зашёл в две комнаты и вернулся в первую";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // "Create room" must always create one — same visitor, same name, as many as they like.
+  async "new-room-each-time"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const urls = [await createRoomAsHost(host.page)];
+      for (let i = 0; i < 2; i++) {
+        await host.page.goto(`${BASE}/`, { waitUntil: "networkidle" });
+        await host.page.fill(t("landing-name"), "Хозяин");
+        await host.page.click(t("landing-start"));
+        await host.page.waitForURL((u) => !urls.includes(u.toString()) && /\/rooms\/[0-9a-f-]{36}/.test(u.toString()), {
+          timeout: 15000,
+        });
+        urls.push(host.page.url());
+      }
+      check(new Set(urls).size === 3, `комнаты не новые: ${urls.map((u) => u.slice(-6))}`);
+      return "три комнаты подряд с одним именем — три разные";
+    } finally {
+      await b.close();
+    }
+  },
+
+  // A new video must start at 0:00, paused — not at the place the previous film stopped.
+  async "new-video-resets"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      await createRoomAsHost(host.page);
+      await addVideo(host.page);
+      await host.page.click(t("play-toggle"));
+      await sleep(3000);
+      await host.page.evaluate((sel) => {
+        const r = document.querySelector(sel);
+        r.value = String(Math.min(Number(r.max) - 5, 300));
+        r.dispatchEvent(new Event("input", { bubbles: true }));
+        r.dispatchEvent(new Event("change", { bubbles: true }));
+      }, t("seek"));
+      await sleep(2500);
+      const before = await state(host.page);
+      check(before.t > 30, `подготовка не удалась: позиция ${before.t}`);
+
+      await host.page
+        .getByRole("button", { name: /Сменить видео|В очередь/ })
+        .first()
+        .click();
+      await host.page.fill(
+        t("add-video-input"),
+        "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+      );
+      await host.page.click(t("add-video-submit"));
+      const switched = await waitFor(
+        async () => {
+          const s = await state(host.page);
+          return s && s.dur > 0 && s.dur < 60;
+        },
+        90000,
+        800,
+      );
+      check(switched, "новое видео не появилось");
+      await sleep(1500);
+      const after = await state(host.page);
+      check(after.t < 2, `новое видео началось с ${after.t} с, а не с нуля`);
+      check(after.paused, "новое видео сразу пошло играть, хотя комната должна ждать");
+      return `новое видео стоит на ${after.t.toFixed(1)} с, на паузе`;
+    } finally {
+      await b.close();
+    }
+  },
+
+  // Pause must stay paused: a stale "playing" heartbeat must not bring the film back to life.
+  async "pause-sticks"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const url = await createRoomAsHost(host.page);
+      await addVideo(host.page);
+      const friend = await newViewer(b);
+      await joinAsGuest(friend.page, url, "Друг");
+      await host.page.click(t("play-toggle"));
+      await sleep(2000);
+      for (let i = 0; i < 16; i++) {
+        await host.page.click(t("play-toggle"));
+        await sleep(350);
+      }
+      if (!(await state(host.page)).paused) await host.page.click(t("play-toggle"));
+      await sleep(12000);
+      const [h1, f1] = [await state(host.page), await state(friend.page)];
+      await sleep(3000);
+      const [h2, f2] = [await state(host.page), await state(friend.page)];
+      check(
+        h1.paused && f1.paused && h2.paused && f2.paused,
+        `пауза не удержалась: ${JSON.stringify({ h1, f1, h2, f2 })}`,
+      );
+      check(Math.abs(h2.t - h1.t) < 0.3 && Math.abs(f2.t - f1.t) < 0.3, "время идёт на паузе");
+      check(Math.abs(h2.t - f2.t) < 1, `хозяин и друг стоят на разных секундах: ${h2.t} / ${f2.t}`);
+      return `16 переключений подряд; пауза держится, обе стороны на ${h2.t.toFixed(1)} с`;
+    } finally {
+      await b.close();
+    }
+  },
+
+  // While the room is held because a friend has no frames, the button the host sees is the one that
+  // should say "pause" — pressing it must keep the room stopped even after the friend catches up.
+  async "pause-during-stall"() {
+    const b = await launch();
+    try {
+      const host = await newViewer(b);
+      const url = await createRoomAsHost(host.page);
+      await addVideo(host.page);
+      const friend = await newViewer(b);
+      let hold = false;
+      await friend.page.route("**/video/proxy/**", async (route) => {
+        if (hold && /\.(ts|m4s)(\?|$)/.test(route.request().url())) await sleep(40000);
+        return route.continue().catch(() => {});
+      });
+      await joinAsGuest(friend.page, url, "Друг");
+      await host.page.click(t("play-toggle"));
+      await sleep(3000);
+      hold = true;
+      await host.page.evaluate((sel) => {
+        const r = document.querySelector(sel);
+        r.value = String(Math.min(Number(r.max) - 5, 300));
+        r.dispatchEvent(new Event("input", { bubbles: true }));
+        r.dispatchEvent(new Event("change", { bubbles: true }));
+      }, t("seek"));
+      const held = await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) > 0, 40000);
+      check(held, "комната не встала в ожидание");
+      // The host presses the (only) button once while the room is held.
+      await host.page.click(t("play-toggle"));
+      await sleep(1500);
+      check((await state(host.page)).paused, "после нажатия во время ожидания комната пошла играть");
+      hold = false;
+      await friend.page.unroute("**/video/proxy/**");
+      await waitFor(async () => (await host.page.locator(t("waiting-banner")).count()) === 0, 60000);
+      await sleep(6000);
+      const [h, f] = [await state(host.page), await state(friend.page)];
+      check(h.paused && f.paused, `комната сама поехала после ожидания: ${JSON.stringify({ h, f })}`);
+      return "нажал «пауза» во время ожидания — комната осталась на паузе";
     } finally {
       await b.close();
     }

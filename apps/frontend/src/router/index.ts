@@ -21,12 +21,12 @@ const router = createRouter({
     { path: "/login", name: "login", component: LoginView },
     { path: "/privacy", name: "privacy", component: LegalView },
     { path: "/terms", name: "terms", component: LegalView },
-    { path: "/rooms", name: "rooms", component: RoomListView, meta: { requiresAuth: true, requiresFullAccount: true } },
+    { path: "/rooms", name: "rooms", component: RoomListView, meta: { requiresAuth: true } },
     {
       path: "/rooms/new",
       name: "room-create",
       component: RoomCreateView,
-      meta: { requiresAuth: true, requiresFullAccount: true },
+      meta: { requiresAuth: true },
     },
     // Deliberately public at the router level: the room UUID is the invite credential, and the
     // view itself gates behind the guest name prompt until a session exists. Requiring auth here
@@ -58,10 +58,10 @@ router.beforeEach(async (to) => {
     return auth.guestRoomId ? { name: "room-player", params: { id: auth.guestRoomId } } : false;
   }
 
-  if (to.name === "login" && auth.isAuthenticated) {
-    return auth.isGuest && auth.guestRoomId
-      ? { name: "room-player", params: { id: auth.guestRoomId } }
-      : { name: "rooms" };
+  // A guest may open the login page (to turn the guest into a real account); only a real account
+  // has no business there.
+  if (to.name === "login" && auth.isAuthenticated && !auth.isGuest) {
+    return { name: "rooms" };
   }
 
   return true;

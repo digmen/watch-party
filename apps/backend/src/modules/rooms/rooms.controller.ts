@@ -1,6 +1,5 @@
 import { Body, Controller, ForbiddenException, Get, HttpCode, Param, Patch, Post, UseGuards } from "@nestjs/common";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
-import { FullAccountGuard } from "../../common/guards/full-account.guard";
 import { type AuthenticatedUser, JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { CreateRoomDto, JoinRoomDto, UpdateRoomDto } from "./dto/room.dto";
 import { toRoomDto } from "./room.presenter";
@@ -12,15 +11,14 @@ export class RoomsController {
   constructor(private readonly rooms: RoomsService) {}
 
   @Post()
-  @UseGuards(FullAccountGuard)
   async create(@Body() dto: CreateRoomDto, @CurrentUser() user: AuthenticatedUser) {
+    await this.rooms.assertMayCreate(user.sub, user.isGuest);
     const room = await this.rooms.create(user.sub, dto.name, { visibility: dto.visibility, password: dto.password });
     const members = await this.rooms.listMembers(room.id);
     return { room: toRoomDto(room, members) };
   }
 
   @Get()
-  @UseGuards(FullAccountGuard)
   async list(@CurrentUser() user: AuthenticatedUser) {
     const myRooms = await this.rooms.listForUser(user.sub);
     const withMembers = await Promise.all(
@@ -40,12 +38,9 @@ export class RoomsController {
   @Post(":id/join")
   @HttpCode(200)
   async join(@Param("id") id: string, @Body() dto: JoinRoomDto, @CurrentUser() user: AuthenticatedUser) {
-    // Not FullAccountGuard: a guest legitimately joins — but only the room their session was
-    // minted for. RoomPlayerView calls this on every mount, so it has to succeed for their own
-    // room and refuse any other UUID they might paste.
-    if (user.isGuest && user.guestRoomId !== id) {
-      throw new ForbiddenException("Гость может войти только в комнату, на которую его пригласили");
-    }
+    // A guest may enter any room whose link (and password, if any) they hold — one browser, many
+    // rooms. The old build pinned a guest to a single room and answered 403 to every other link,
+    // which people saw as "could not enter the room".
     await this.rooms.join(id, user.sub, dto.password);
     const room = await this.rooms.findById(id);
     const members = await this.rooms.listMembers(id);

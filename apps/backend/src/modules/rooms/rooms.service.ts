@@ -1,6 +1,16 @@
-import { ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import {
+  ConflictException,
+  ForbiddenException,
+  HttpException,
+  HttpStatus,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { and, count, desc, eq, gt } from "drizzle-orm";
+import type Redis from "ioredis";
 import { DRIZZLE_CLIENT, type DrizzleDb } from "../../database/drizzle.module";
+import { REDIS_CLIENT } from "../../redis/redis.module";
 import { type Room, roomMembers, rooms, roomVideos, users, videoAssets } from "../../database/schema";
 
 export interface RoomMemberRow {
@@ -12,7 +22,20 @@ export interface RoomMemberRow {
 
 @Injectable()
 export class RoomsService {
-  constructor(@Inject(DRIZZLE_CLIENT) private readonly db: DrizzleDb) {}
+  constructor(
+    @Inject(DRIZZLE_CLIENT) private readonly db: DrizzleDb,
+    @Inject(REDIS_CLIENT) private readonly redis: Redis,
+  ) {}
+
+  // Room names are free text and may repeat; what is limited is how fast one guest can create
+  // rooms (a registered account is not throttled here).
+  async assertMayCreate(userId: string, isGuest: boolean): Promise<void> {
+    if (!isGuest) return;
+    const key = `rooms:create:${userId}`;
+    const n = await this.redis.incr(key);
+    if (n === 1) await this.redis.expire(key, 3600);
+    if (n > 20) throw new HttpException("Слишком много новых комнат за час", HttpStatus.TOO_MANY_REQUESTS);
+  }
 
   async create(
     ownerId: string,

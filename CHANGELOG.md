@@ -6,6 +6,11 @@ Notable changes to this project. Format loosely follows
 
 ## 2026-10-10
 
+- **Guests are no longer pinned to one room**: one browser can open many links; "Create room" always creates a new room (same visitor, repeating names); a duplicate display name in a room becomes "Name (2)" instead of an error; guests get "My rooms". Idempotency-Key on quick start protects against double submits only.
+- **New video starts at 0:00, stopped** (was: at the place the previous film stopped — a 3 h film then a 10 min one never started).
+- **Playback state is versioned**: heartbeat is re-read after the lock and carries the version, clients drop older events — a stale "playing" can no longer undo a pause. While the room is held for someone's missing frames the one button reads "pause" (it used to read ▶, so a click meant "play"), and a system hold never resumes a room that a person touched since. Single click on the picture waits 250 ms so a double click is just fullscreen.
+- New QA scenarios: guest-two-rooms, new-room-each-time, new-video-resets, pause-sticks, pause-during-stall (+ `HEARTBEAT_INTERVAL_MS` to stress the heartbeat).
+
 - CI deploys to the Prague host too (`deploy-prague`), through a key that can run only the deploy script (forced command). `deploy.sh` re-executes itself after `git reset`, so a changed script never runs half-old. yt-dlp now lives as a self-updating release first on PATH and a nightly job refreshes it (`YtDlpUpdaterService`).
 
 - Fix: after a network drop (metro, Wi-Fi↔LTE, phone lock) the client re-joins the room, adopts the current playback state and back-fills missed chat. Before, the new socket was never in the room and silently stopped receiving play/pause/seek/stall/chat — found by the `socket-drop` QA scenario, which now cuts the socket for real. Also: no stacked time-sync listeners on reconnect; server-initiated disconnects reconnect.

@@ -28,7 +28,8 @@ import { PresenceService } from "./presence.service";
 import { parseCookieHeader } from "./socket-cookie.util";
 import { StallService } from "./stall.service";
 
-const HEARTBEAT_INTERVAL_MS = 7000;
+// Overridable so tests can make the heartbeat fire constantly and flush out races with pause/seek.
+const HEARTBEAT_INTERVAL_MS = Number(process.env.HEARTBEAT_INTERVAL_MS ?? 7000);
 const HEARTBEAT_LOCK_TTL_SEC = 5;
 
 interface SocketData {
@@ -101,11 +102,16 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
       );
       if (!acquired) continue; // another instance already ticked this room this cycle
 
+      // Re-read AFTER the lock: the state read above may be stale by now (someone paused while we
+      // waited), and broadcasting it with a fresh timestamp used to bring a paused room back to life.
+      const fresh = await this.playbackState.get(roomId);
+      if (fresh.status !== "playing") continue;
       const now = Date.now();
       this.server.to(roomId).emit(SocketEvents.PlayerHeartbeat, {
-        positionSec: this.playbackState.projectedPosition(state, now),
+        positionSec: this.playbackState.projectedPosition(fresh, now),
         serverTimestampMs: now,
-        status: state.status,
+        status: fresh.status,
+        version: fresh.version,
       });
     }
   }
@@ -152,12 +158,13 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   async onPlay(@ConnectedSocket() socket: Socket, @MessageBody() body: { roomId: string } & PlayEvent) {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const stamped = stampWithServerTime(body);
-    await this.playbackState.set(body.roomId, {
+    await this.stall.clearAutoPaused(body.roomId); // a person decided: the system hold no longer applies
+    const next = await this.playbackState.set(body.roomId, {
       status: "playing",
       positionSec: body.positionSec,
       updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerPlay, stamped);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerPlay, { ...stamped, version: next.version });
   }
 
   @SubscribeMessage(SocketEvents.PlayerPause)
@@ -165,12 +172,12 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const stamped = stampWithServerTime(body);
     await this.stall.clearAutoPaused(body.roomId); // a person paused: do not auto-resume behind their back
-    await this.playbackState.set(body.roomId, {
+    const next = await this.playbackState.set(body.roomId, {
       status: "paused",
       positionSec: body.positionSec,
       updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerPause, stamped);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerPause, { ...stamped, version: next.version });
   }
 
   @SubscribeMessage(SocketEvents.PlayerSeek)
@@ -178,12 +185,12 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (!(await this.rooms.isMember(body.roomId, (socket.data as SocketData).userId))) return;
     const current = await this.playbackState.get(body.roomId);
     const stamped = stampWithServerTime(body);
-    await this.playbackState.set(body.roomId, {
+    const next = await this.playbackState.set(body.roomId, {
       status: current.status,
       positionSec: body.positionSec,
       updatedAtMs: stamped.originTimestampMs,
     });
-    this.server.to(body.roomId).emit(SocketEvents.PlayerSeek, stamped);
+    this.server.to(body.roomId).emit(SocketEvents.PlayerSeek, { ...stamped, version: next.version });
   }
 
   // A viewer's buffer ran dry (stalled=true) or recovered (stalled=false). While anyone is waiting
@@ -206,11 +213,14 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
     if (state.status === "playing") {
       const now = Date.now();
       const positionSec = this.playbackState.projectedPosition(state, now);
-      await this.stall.markAutoPaused(body.roomId);
-      await this.playbackState.set(body.roomId, { status: "paused", positionSec, updatedAtMs: now });
-      this.server
-        .to(body.roomId)
-        .emit(SocketEvents.PlayerPause, { positionSec, originTimestampMs: now, byUserId: userId });
+      const next = await this.playbackState.set(body.roomId, { status: "paused", positionSec, updatedAtMs: now });
+      await this.stall.markAutoPaused(body.roomId, next.version);
+      this.server.to(body.roomId).emit(SocketEvents.PlayerPause, {
+        positionSec,
+        originTimestampMs: now,
+        byUserId: userId,
+        version: next.version,
+      });
     }
     await this.broadcastStall(body.roomId);
   }
@@ -219,13 +229,25 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
   // once nobody is, resumes a room that this mechanism (not a person) paused.
   private async settleStall(roomId: string, byUserId: string): Promise<void> {
     const waiting = await this.stall.active(roomId);
-    if (waiting.length === 0 && (await this.stall.consumeAutoPaused(roomId))) {
+    if (waiting.length === 0) {
+      const heldVersion = await this.stall.consumeAutoPaused(roomId);
       const state = await this.playbackState.get(roomId);
-      const now = Date.now();
-      await this.playbackState.set(roomId, { status: "playing", positionSec: state.positionSec, updatedAtMs: now });
-      this.server
-        .to(roomId)
-        .emit(SocketEvents.PlayerPlay, { positionSec: state.positionSec, originTimestampMs: now, byUserId });
+      // Resume only a room the SYSTEM paused and nobody has touched since; if a person pressed
+      // anything in between, their choice stands.
+      if (heldVersion !== null && state.version === heldVersion && state.status === "paused") {
+        const now = Date.now();
+        const next = await this.playbackState.set(roomId, {
+          status: "playing",
+          positionSec: state.positionSec,
+          updatedAtMs: now,
+        });
+        this.server.to(roomId).emit(SocketEvents.PlayerPlay, {
+          positionSec: state.positionSec,
+          originTimestampMs: now,
+          byUserId,
+          version: next.version,
+        });
+      }
     }
     await this.broadcastStall(roomId);
   }
@@ -250,6 +272,21 @@ export class RoomGateway implements OnGatewayInit, OnGatewayDisconnect {
 
     const row = await this.chat.post(body.roomId, userId, parsed.data.body);
     this.server.to(body.roomId).emit(SocketEvents.ChatMessage, toChatMessageDto(row));
+  }
+
+  // A different video starts at 0:00, stopped, with nobody being waited for — never at the place the
+  // previous film happened to be.
+  async resetPlayback(roomId: string): Promise<void> {
+    await this.stall.clearAll(roomId);
+    const now = Date.now();
+    const next = await this.playbackState.set(roomId, { status: "paused", positionSec: 0, updatedAtMs: now });
+    this.server.to(roomId).emit(SocketEvents.PlayerPause, {
+      positionSec: 0,
+      originTimestampMs: now,
+      byUserId: "00000000-0000-0000-0000-000000000000",
+      version: next.version,
+    });
+    this.server.to(roomId).emit(SocketEvents.RoomStall, { roomId, waitingFor: [] });
   }
 
   // Called from the video pipeline (VideoService on add, VideoPrefetchProcessor once an asset is

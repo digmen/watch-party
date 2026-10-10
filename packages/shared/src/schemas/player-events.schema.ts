@@ -4,6 +4,9 @@ const BasePlayerEvent = z.object({
   positionSec: z.number().min(0),
   originTimestampMs: z.number(),
   byUserId: z.string().uuid(),
+  // Monotonic per room: a client ignores anything older than the state it already holds, so a
+  // late-arriving "playing" can never undo a newer pause.
+  version: z.number().int().optional(),
 });
 
 export const PlayEventSchema = BasePlayerEvent;
@@ -19,6 +22,7 @@ export const HeartbeatEventSchema = z.object({
   positionSec: z.number().min(0),
   serverTimestampMs: z.number(),
   status: z.enum(["playing", "paused"]),
+  version: z.number().int().optional(),
 });
 export type HeartbeatEvent = z.infer<typeof HeartbeatEventSchema>;
 

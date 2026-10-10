@@ -81,6 +81,7 @@ export function refreshSession(): Promise<boolean> {
 interface RequestOptions {
   method?: string;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 function buildHeaders(hasBody: boolean, csrfToken?: string): Record<string, string> {
@@ -102,7 +103,7 @@ export async function apiFetch<T>(path: string, options: RequestOptions = {}): P
   const doFetch = (csrfToken?: string) =>
     fetch(`${API_ORIGIN}/api${path}`, {
       method,
-      headers: buildHeaders(hasBody, csrfToken),
+      headers: { ...buildHeaders(hasBody, csrfToken), ...(options.headers ?? {}) },
       credentials: "include",
       body: hasBody ? JSON.stringify(options.body) : undefined,
     });

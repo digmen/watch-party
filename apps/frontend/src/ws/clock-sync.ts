@@ -2,6 +2,14 @@ export interface RoomPlaybackState {
   status: "playing" | "paused";
   positionSec: number;
   updatedAtMs: number;
+  // Server's monotonic counter. Absent only on old servers / optimistic local updates.
+  version?: number;
+}
+
+/** An event older than the state we already hold must be dropped (a late "playing" must not undo a pause). */
+export function isNewerVersion(incoming: number | undefined, current: number | undefined): boolean {
+  if (incoming === undefined || current === undefined) return true;
+  return incoming >= current;
 }
 
 const HARD_SEEK_THRESHOLD_SEC = 0.3;

@@ -72,6 +72,10 @@ const isRoomOwner = computed(() => roomOwnerId.value !== null && roomOwnerId.val
 // pick the video — the backend enforces the same rule on addVideo; this keeps the UI honest.
 const canManageVideo = computed(() => auth.isAuthenticated && (!auth.isGuest || isRoomOwner.value));
 const isPlaying = computed(() => player.playback.status === "playing");
+// What the people in the room INTEND: while the room is held for someone's missing frames it is
+// "paused" on the server, but everyone's intent is still "playing" — and the one button must say
+// "pause" then. (It used to say ▶, so the host's click meant "play" and he could never stop it.)
+const intendsToPlay = computed(() => isPlaying.value || player.waitingFor.length > 0);
 const showAddVideo = computed(
   () => canManageVideo.value && (changingVideo.value || !videoAsset.value || videoAsset.value.status === "failed"),
 );
@@ -175,6 +179,12 @@ async function enterRoom(password?: string) {
     if (err instanceof ApiError && (err.message === "PASSWORD_REQUIRED" || err.message === "WRONG_PASSWORD")) {
       passwordPrompt.value = true;
       passwordError.value = err.message === "WRONG_PASSWORD" ? humanize(err.message) : null;
+    } else if (err instanceof ApiError && err.status === 404) {
+      notFound.value = true;
+    } else if (err instanceof ApiError && /no longer active/i.test(err.message)) {
+      enterError.value = "Эта комната закрыта хозяином или удалена за неактивность. Попросите новую ссылку.";
+    } else if (err instanceof ApiError && err.status === 429) {
+      enterError.value = "Слишком много попыток. Подождите минуту и обновите страницу.";
     } else {
       enterError.value = "Не удалось войти в комнату. Обновите страницу или попросите новую ссылку.";
     }
@@ -249,7 +259,7 @@ async function removePassword() {
 // --- playback controls --------------------------------------------------------------------
 function togglePlay() {
   if (!auth.user) return;
-  if (isPlaying.value) player.pause(auth.user.id);
+  if (intendsToPlay.value) player.pause(auth.user.id);
   else player.play(auth.user.id);
 }
 
@@ -412,7 +422,7 @@ function leave() {
           v-else-if="videoAsset?.status === 'ready'"
           ref="stageRef"
           :src="fullPlaybackUrl(videoAsset)"
-          :playing="isPlaying"
+          :playing="intendsToPlay"
           :position-sec="displaySeconds"
           :waiting-for="player.waitingFor"
           :title="videoAsset.title"

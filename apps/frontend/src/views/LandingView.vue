@@ -14,6 +14,7 @@ const router = useRouter();
 
 const publicRooms = ref<PublicRoomDto[]>([]);
 onMounted(async () => {
+  if (auth.isGuest && auth.user) displayName.value = auth.user.displayName;
   try {
     publicRooms.value = (await roomsApi.publicList(10)).rooms;
   } catch {
@@ -111,10 +112,6 @@ function continueWithGoogle() {
         <RouterLink class="btn-ghost" to="/rooms/new">Новая комната</RouterLink>
       </div>
 
-      <div v-else-if="auth.isGuest && auth.guestRoomId" class="cta">
-        <RouterLink class="btn" :to="`/rooms/${auth.guestRoomId}`">Вернуться в комнату</RouterLink>
-      </div>
-
       <template v-else>
         <form class="start" @submit.prevent="startNow">
           <input
@@ -131,6 +128,7 @@ function continueWithGoogle() {
           </button>
         </form>
         <p v-if="auth.error" class="error start-error" role="alert">{{ auth.error }}</p>
+        <p v-if="auth.isGuest" class="note"><RouterLink to="/rooms">Мои комнаты</RouterLink></p>
         <p class="note">
           или
           <button type="button" class="linklike" @click="continueWithGoogle">войдите через Google</button>
