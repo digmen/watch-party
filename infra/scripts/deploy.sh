@@ -14,9 +14,14 @@ WP_BACKEND_PORT=${WP_BACKEND_PORT:-3000}
 WP_FRONTEND_PORT=${WP_FRONTEND_PORT:-8080}
 
 COMPOSE="docker compose -f infra/docker-compose.yml -f infra/docker-compose.caddy.yml"
+SERVICES="backend frontend"
+if [ "${WP_EDGE:-0}" = "1" ]; then
+  COMPOSE="$COMPOSE -f infra/docker-compose.edge.yml"
+  SERVICES="$SERVICES edge"
+fi
 
 $COMPOSE build backend frontend
-$COMPOSE up -d postgres redis
+$COMPOSE up -d --wait postgres redis
 
 # Симлинк под захардкоженный в сборке относительный путь миграций (см. коммит,
 # добавивший этот скрипт) — сборка backend ищет ./src/database/migrations от
@@ -29,7 +34,7 @@ $COMPOSE run --rm --no-deps --user root --entrypoint sh backend -c '
   su bun -c "bun apps/backend/dist/database/migrate.js"
 '
 
-$COMPOSE up -d backend frontend
+$COMPOSE up -d $SERVICES
 
 # Ждём health вместо фиксированного sleep — и явно проваливаемся, если не поднялось,
 # а не оставляем битый деплой молча висеть.
