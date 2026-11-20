@@ -16,6 +16,8 @@ const props = defineProps<{
   alone: boolean;
   inviteCopied: boolean;
   typingNames: string[];
+  // Inside the phone tab bar the "Чат" heading would repeat the tab's own label.
+  bare?: boolean;
 }>();
 const emit = defineEmits<{ send: [text: string, replyToId?: string]; invite: []; typing: [] }>();
 
@@ -118,13 +120,16 @@ function submit() {
   emit("send", v, replyTo.value?.id);
   text.value = "";
   replyTo.value = null;
+  // Keep the field focused: on a phone a blur closes the keyboard, and the next message would have to
+  // reopen it (and jump the whole layout) every single time.
+  input.value?.focus();
   nextTick(toBottom);
 }
 </script>
 
 <template>
   <section class="chat" aria-label="Чат комнаты">
-    <header class="chat-head">
+    <header v-if="!bare" class="chat-head">
       <h2>Чат</h2>
     </header>
 
@@ -172,7 +177,7 @@ function submit() {
       </template>
     </div>
 
-    <button v-if="unread > 0" class="jump" @click="toBottom">↓ Новые сообщения · {{ unread }}</button>
+    <button v-if="unread > 0" class="jump" @click="toBottom">Новые сообщения · {{ unread }} ↓</button>
 
     <p v-if="typingLabel" class="typing" data-testid="chat-typing" role="status">{{ typingLabel }}</p>
 
@@ -194,7 +199,9 @@ function submit() {
         autocomplete="off"
         @input="emit('typing')"
       />
-      <button type="submit" data-testid="chat-send" class="send" :disabled="!text.trim()" aria-label="Отправить">➤</button>
+      <button type="submit" data-testid="chat-send" class="send" :disabled="!text.trim()" aria-label="Отправить" @mousedown.prevent>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z" fill="currentColor" /></svg>
+      </button>
     </form>
   </section>
 </template>
@@ -207,16 +214,15 @@ function submit() {
   min-height: 0;
   height: 100%;
   background: var(--color-surface);
-  border-left: 1px solid var(--color-border);
 }
 .chat-head {
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
 .chat-head h2 {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--color-text-faint);
 }
 .log {
@@ -259,7 +265,7 @@ function submit() {
   flex-direction: row-reverse;
 }
 .msg.flash {
-  background: rgb(255 255 255 / 0.1);
+  background: var(--color-accent-soft);
 }
 .avatar {
   flex: none;
@@ -284,7 +290,8 @@ function submit() {
   min-width: 0;
 }
 .mine .bubble {
-  background: rgb(255 107 90 / 0.22);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-line);
 }
 .author {
   width: 100%;
@@ -350,7 +357,8 @@ function submit() {
 .jump {
   position: absolute;
   left: 50%;
-  bottom: 5.4rem;
+  bottom: calc(4.6rem + env(safe-area-inset-bottom));
+  min-height: 2.25rem;
   transform: translateX(-50%);
   padding: var(--space-1) var(--space-4);
   border-radius: var(--radius-full);
@@ -389,7 +397,9 @@ function submit() {
 .icon {
   background: transparent;
   color: var(--color-text-muted);
-  padding: 0 var(--space-2);
+  width: 2.75rem;
+  min-height: 2.75rem;
+  padding: 0;
 }
 .composer {
   display: flex;
@@ -406,9 +416,13 @@ function submit() {
   /* 16px: anything smaller makes iOS Safari zoom the page when the field is focused. */
   font-size: 16px;
 }
+.composer input {
+  min-height: 2.9rem;
+}
 .send {
   flex: none;
-  width: 2.8rem;
+  width: 2.9rem;
+  height: 2.9rem;
   padding: 0;
   border-radius: 50%;
 }

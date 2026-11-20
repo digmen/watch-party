@@ -58,19 +58,19 @@ function submit() {
 }
 .add.hero {
   aspect-ratio: 16 / 9;
-  max-height: calc(100dvh - 8rem);
+  max-height: var(--stage-max-h, calc(100dvh - 8rem));
   justify-content: center;
   align-items: center;
   padding: var(--space-6) var(--space-5);
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(60% 80% at 50% 0%, rgb(255 107 90 / 0.14), transparent 70%),
+    radial-gradient(60% 80% at 50% 0%, var(--color-accent-soft), transparent 70%),
     var(--color-surface);
   border: 1px solid var(--color-border);
   text-align: center;
 }
 .intro h2 {
-  font-size: var(--text-xl);
+  font-size: var(--text-2xl);
 }
 .intro p {
   color: var(--color-text-muted);
@@ -108,11 +108,15 @@ function submit() {
 @media (max-width: 40rem) {
   .add.hero {
     aspect-ratio: auto;
+    max-height: none;
     border-radius: 0;
     padding: var(--space-5) var(--space-4);
   }
   .row {
     flex-direction: column;
+  }
+  .chips {
+    gap: var(--space-1);
   }
 }
 </style>

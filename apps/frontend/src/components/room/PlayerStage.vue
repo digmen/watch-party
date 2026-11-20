@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChatMessageDto } from "@watch-party/shared";
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import VideoPlayer from "../VideoPlayer.vue";
 
 const props = defineProps<{
@@ -11,6 +11,9 @@ const props = defineProps<{
   waitingFor: string[];
   title: string | null;
   recent: ChatMessageDto[];
+  selfId?: string | null;
+  // Chat over the picture outside fullscreen too — the phone-landscape layout has no room for a side panel.
+  overlayChat?: boolean;
 }>();
 const emit = defineEmits<{
   toggle: [];
@@ -52,49 +55,113 @@ function wake() {
   }, 2800);
 }
 
-// Fullscreen: the real API where it exists, otherwise (iPhone Safari only fullscreens bare
-// <video> elements, which would drop our controls and the chat) a fixed-position "theatre" mode.
+// Fullscreen: the real API (with the webkit prefix for older Safari/iPad) on the whole stage, so our
+// controls and chat stay on top. iPhone Safari can only fullscreen a bare <video>, which would drop
+// both — there a fixed-position "theatre" mode fills the screen instead.
+type WebkitDocument = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => Promise<void> };
+type WebkitElement = HTMLElement & { webkitRequestFullscreen?: () => Promise<void> | void };
 const fullscreen = ref(false);
 const pseudoFullscreen = ref(false);
 const chatOpen = ref(false);
 const chatDraft = ref("");
+const chatInput = ref<HTMLInputElement | null>(null);
+
+function fullscreenElement(): Element | null {
+  const doc = document as WebkitDocument;
+  return document.fullscreenElement ?? doc.webkitFullscreenElement ?? null;
+}
 
 function onFsChange() {
-  fullscreen.value = document.fullscreenElement === stage.value;
-  if (!fullscreen.value) chatOpen.value = false;
+  fullscreen.value = fullscreenElement() === stage.value;
+  if (!fullscreen.value && !props.overlayChat) chatOpen.value = false;
 }
 
 async function toggleFullscreen() {
-  const el = stage.value;
+  const el = stage.value as WebkitElement | null;
   if (!el) return;
   if (fullscreen.value || pseudoFullscreen.value) {
+    const doc = document as WebkitDocument;
     if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
+    else if (doc.webkitFullscreenElement) await doc.webkitExitFullscreen?.();
     pseudoFullscreen.value = false;
     fullscreen.value = false;
     chatOpen.value = false;
     return;
   }
-  if (el.requestFullscreen) {
-    try {
+  try {
+    if (el.requestFullscreen) {
       await el.requestFullscreen();
       return;
-    } catch {
-      // fall through to the pseudo mode
     }
+    if (el.webkitRequestFullscreen) {
+      await el.webkitRequestFullscreen();
+      return;
+    }
+  } catch {
+    // fall through to the pseudo mode
   }
   pseudoFullscreen.value = true;
 }
 
 const inFullscreen = computed(() => fullscreen.value || pseudoFullscreen.value);
+const showOverlay = computed(() => inFullscreen.value || props.overlayChat === true);
 
-// Newest few messages float over the picture in fullscreen, so a phone in landscape still has chat.
-const overlayMessages = computed(() => props.recent.slice(-4));
+// --- chat over the picture ----------------------------------------------------------------
+// Fresh messages float in the bottom-left corner for a few seconds and fade; the 💬 button opens a
+// panel with the recent history and an input, so nobody has to leave fullscreen to answer.
+const FLOAT_MS = 6000;
+const seenAt = new Map<string, number>();
+const now = ref(Date.now());
+let nowTimer: ReturnType<typeof setInterval> | null = null;
+for (const m of props.recent) seenAt.set(m.id, 0);
+watch(
+  () => props.recent.length,
+  () => {
+    const t = Date.now();
+    for (const m of props.recent) if (!seenAt.has(m.id)) seenAt.set(m.id, t);
+    now.value = t;
+  },
+);
+const floating = computed(() =>
+  props.recent.slice(-4).filter((m) => now.value - (seenAt.get(m.id) ?? 0) < FLOAT_MS),
+);
+const panelMessages = computed(() => props.recent.slice(-40));
+const unseenWhileClosed = ref(0);
+watch(
+  () => props.recent.length,
+  (n, before) => {
+    if (!chatOpen.value && showOverlay.value) unseenWhileClosed.value += Math.max(0, n - before);
+  },
+);
+const panelLog = ref<HTMLElement | null>(null);
+async function scrollPanelToEnd() {
+  await nextTick();
+  if (panelLog.value) panelLog.value.scrollTop = panelLog.value.scrollHeight;
+}
+watch(
+  () => props.recent.length,
+  () => {
+    if (chatOpen.value) scrollPanelToEnd();
+  },
+);
+
+async function toggleChat() {
+  chatOpen.value = !chatOpen.value;
+  unseenWhileClosed.value = 0;
+  wake();
+  if (chatOpen.value) {
+    await scrollPanelToEnd();
+    chatInput.value?.focus();
+  }
+}
 
 function sendFromOverlay() {
   const v = chatDraft.value.trim();
   if (!v) return;
   emit("send", v);
   chatDraft.value = "";
+  // Keep the keyboard up: the next message follows right away.
+  chatInput.value?.focus();
 }
 
 // One click on the picture toggles play/pause — but a double click (fullscreen) must not also toggle
@@ -143,11 +210,18 @@ function onSliderChange(e: Event) {
 
 onMounted(() => {
   document.addEventListener("fullscreenchange", onFsChange);
+  document.addEventListener("webkitfullscreenchange", onFsChange);
+  nowTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
   wake();
 });
 onUnmounted(() => {
   document.removeEventListener("fullscreenchange", onFsChange);
+  document.removeEventListener("webkitfullscreenchange", onFsChange);
   if (hideTimer) clearTimeout(hideTimer);
+  if (clickTimer) clearTimeout(clickTimer);
+  if (nowTimer) clearInterval(nowTimer);
 });
 
 defineExpose({
@@ -166,7 +240,7 @@ defineExpose({
   <div
     ref="stage"
     class="stage"
-    :class="{ fs: inFullscreen, pseudo: pseudoFullscreen, 'show-controls': controlsVisible || !playing }"
+    :class="{ fs: inFullscreen, pseudo: pseudoFullscreen, 'show-controls': controlsVisible || !playing, 'chat-open': chatOpen && showOverlay }"
     @pointermove="wake"
     @pointerdown="wake"
     @dblclick.prevent="onDoubleClick"
@@ -196,20 +270,44 @@ defineExpose({
       <span>Загружаем первые секунды…</span>
     </div>
 
-    <button v-else-if="!playing && waitingFor.length === 0" class="big-play" aria-label="Смотреть" @click="requestToggle">▶</button>
+    <button v-else-if="!playing && waitingFor.length === 0" class="big-play" aria-label="Смотреть" @click="requestToggle">
+      <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" /></svg>
+    </button>
 
     <div v-if="title" class="title">{{ title }}</div>
 
-    <!-- Chat over the picture, only while fullscreen -->
-    <div v-if="inFullscreen" class="fs-chat" @pointerdown.stop>
-      <ul v-if="overlayMessages.length" class="fs-log">
-        <li v-for="m in overlayMessages" :key="m.id"><b>{{ m.displayName }}</b> {{ m.body }}</li>
+    <!-- Chat over the picture: fullscreen, and phone landscape -->
+    <template v-if="showOverlay">
+      <ul v-if="!chatOpen && floating.length" class="float-log" aria-hidden="true">
+        <li v-for="m in floating" :key="m.id"><b>{{ m.userId === selfId ? "Вы" : m.displayName }}</b> {{ m.body }}</li>
       </ul>
-      <form v-if="chatOpen" class="fs-form" @submit.prevent="sendFromOverlay">
-        <input v-model="chatDraft" type="text" maxlength="2000" placeholder="Сообщение…" aria-label="Сообщение" autocomplete="off" />
-        <button type="submit" :disabled="!chatDraft.trim()">➤</button>
-      </form>
-    </div>
+
+      <aside v-if="chatOpen" class="chat-sheet" aria-label="Чат поверх видео" @pointerdown.stop @dblclick.stop>
+        <header class="sheet-head">
+          <span>Чат</span>
+          <button type="button" class="icon" aria-label="Скрыть чат" @click="toggleChat">✕</button>
+        </header>
+        <ul ref="panelLog" class="sheet-log">
+          <li v-if="panelMessages.length === 0" class="sheet-empty">Пока тихо. Напишите первым.</li>
+          <li v-for="m in panelMessages" :key="m.id" :class="{ mine: m.userId === selfId }">
+            <b>{{ m.userId === selfId ? "Вы" : m.displayName }}</b> {{ m.body }}
+          </li>
+        </ul>
+        <form class="sheet-form" @submit.prevent="sendFromOverlay">
+          <input
+            ref="chatInput"
+            v-model="chatDraft"
+            type="text"
+            maxlength="2000"
+            placeholder="Сообщение…"
+            aria-label="Сообщение"
+            enterkeyhint="send"
+            autocomplete="off"
+          />
+          <button type="submit" class="send" :disabled="!chatDraft.trim()" aria-label="Отправить" @mousedown.prevent>➤</button>
+        </form>
+      </aside>
+    </template>
 
     <div class="controls" @pointerdown.stop>
       <button
@@ -240,8 +338,18 @@ defineExpose({
         {{ muted || volume === 0 ? "🔇" : "🔊" }}
       </button>
       <input v-model.number="volume" class="vol" type="range" min="0" max="1" step="0.05" aria-label="Громкость" @input="applyVolume" />
-      <button v-if="inFullscreen" class="icon" aria-label="Чат" @click="chatOpen = !chatOpen">💬</button>
-      <button class="icon" aria-label="На весь экран" @click="toggleFullscreen">{{ inFullscreen ? "⤡" : "⛶" }}</button>
+      <button
+        v-if="showOverlay"
+        class="icon chat-btn"
+        :aria-label="chatOpen ? 'Скрыть чат' : 'Чат'"
+        :aria-pressed="chatOpen"
+        @click="toggleChat"
+      >
+        💬<span v-if="unseenWhileClosed > 0" class="dot">{{ unseenWhileClosed > 9 ? "9+" : unseenWhileClosed }}</span>
+      </button>
+      <button class="icon" :aria-label="inFullscreen ? 'Выйти из полноэкранного режима' : 'На весь экран'" @click="toggleFullscreen">
+        {{ inFullscreen ? "⤡" : "⛶" }}
+      </button>
     </div>
   </div>
 </template>
@@ -252,11 +360,13 @@ defineExpose({
   background: #000;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
   aspect-ratio: 16 / 9;
-  max-height: calc(100dvh - 8rem);
+  /* The room decides how tall the picture may get (phone portrait, landscape, desktop). */
+  max-height: var(--stage-max-h, calc(100dvh - 8rem));
   width: 100%;
   margin-inline: auto;
+  isolation: isolate;
 }
 .stage.fs {
   border-radius: 0;
@@ -268,6 +378,7 @@ defineExpose({
   position: fixed;
   inset: 0;
   z-index: 9999;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 .stage :deep(.video) {
   width: 100%;
@@ -285,7 +396,7 @@ defineExpose({
   place-items: center;
   padding: var(--space-5);
   text-align: center;
-  background: rgb(10 13 18 / 0.92);
+  background: rgb(8 8 11 / 0.92);
   z-index: 5;
 }
 .gate {
@@ -299,7 +410,7 @@ defineExpose({
   gap: var(--space-3);
   padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-full);
-  background: rgb(10 13 18 / 0.85);
+  background: rgb(8 8 11 / 0.85);
   font-size: var(--text-sm);
   z-index: 3;
 }
@@ -309,10 +420,10 @@ defineExpose({
   margin: auto;
   width: 4.5rem;
   height: 4.5rem;
-  padding: 0 0 0 6px;
+  padding: 0 0 0 4px;
   border-radius: 50%;
-  font-size: 1.6rem;
-  background: rgb(255 107 90 / 0.92);
+  box-shadow: var(--shadow-accent);
+  z-index: 2;
 }
 .title {
   position: absolute;
@@ -321,11 +432,15 @@ defineExpose({
   right: 0;
   padding: var(--space-3) var(--space-4) var(--space-6);
   font-size: var(--text-sm);
+  font-weight: 600;
   background: linear-gradient(rgb(0 0 0 / 0.65), transparent);
   opacity: 0;
   transition: opacity 200ms;
   pointer-events: none;
   text-shadow: 0 1px 3px #000;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .show-controls .title,
 .show-controls .controls {
@@ -341,7 +456,8 @@ defineExpose({
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
   border-radius: var(--radius-full);
-  background: rgb(10 13 18 / 0.88);
+  background: rgb(8 8 11 / 0.88);
+  border: 1px solid var(--color-accent-line);
   font-size: var(--text-sm);
   z-index: 3;
   max-width: 90%;
@@ -367,21 +483,42 @@ defineExpose({
   bottom: 0;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   padding: var(--space-6) var(--space-3) var(--space-2);
-  background: linear-gradient(transparent, rgb(0 0 0 / 0.78));
+  background: linear-gradient(transparent, rgb(0 0 0 / 0.8));
   opacity: 0;
   transition: opacity 200ms;
+  z-index: 4;
 }
 .controls .icon {
+  position: relative;
   background: transparent;
   color: #fff;
-  padding: var(--space-2);
-  min-width: 2.4rem;
+  width: 2.75rem;
+  min-height: 2.75rem;
   font-size: 1rem;
+  border-radius: var(--radius);
 }
 .controls .icon:hover:not(:disabled) {
   background: rgb(255 255 255 / 0.15);
+  box-shadow: none;
+}
+.chat-btn[aria-pressed="true"] {
+  background: var(--color-accent-soft);
+}
+.dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 3px;
+  border-radius: var(--radius-full);
+  background: var(--color-accent);
+  color: var(--color-accent-contrast);
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1.1rem;
 }
 .time {
   font-size: var(--text-xs);
@@ -394,6 +531,7 @@ defineExpose({
 .seek {
   flex: 1;
   min-width: 4rem;
+  min-height: 2.75rem;
   padding: 0;
   border: none;
   background: none;
@@ -406,52 +544,132 @@ defineExpose({
   background: none;
   accent-color: var(--color-accent);
 }
-.fs-chat {
+
+/* Floating messages, bottom-left, above the controls. */
+.float-log {
   position: absolute;
-  left: var(--space-4);
-  bottom: 4.2rem;
-  width: min(26rem, 70%);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  z-index: 4;
-}
-.fs-log {
+  left: var(--space-3);
+  bottom: 4rem;
+  width: min(24rem, 65%);
   list-style: none;
   padding: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: var(--text-sm);
+  line-height: 1.35;
   text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+  z-index: 3;
 }
-.fs-log li {
-  background: rgb(0 0 0 / 0.45);
-  padding: 0.25rem 0.6rem;
-  border-radius: 10px;
+.float-log li {
+  background: rgb(8 8 11 / 0.55);
+  padding: 0.25rem 0.65rem;
+  border-radius: 12px;
   width: fit-content;
   max-width: 100%;
   overflow-wrap: anywhere;
+  animation: float-in 200ms ease-out, float-out 600ms ease-in 5.2s forwards;
 }
-.fs-log b {
+.float-log b,
+.sheet-log b {
   color: var(--color-accent);
   margin-right: 0.3rem;
 }
-.fs-form {
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes float-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* Slide-in chat over the right side of the picture. */
+.chat-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(20rem, 46%);
+  display: flex;
+  flex-direction: column;
+  background: rgb(8 8 11 / 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-left: 1px solid rgb(255 255 255 / 0.08);
+  z-index: 5;
+  animation: sheet-in 180ms ease-out;
+}
+@keyframes sheet-in {
+  from {
+    transform: translateX(100%);
+  }
+}
+.chat-open .controls {
+  right: min(20rem, 46%);
+}
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-4);
+  font-family: var(--font-display);
+  font-size: var(--text-sm);
+}
+.sheet-head .icon {
+  background: transparent;
+  color: var(--color-text-muted);
+  width: 2.75rem;
+  min-height: 2.75rem;
+}
+.sheet-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 1.35;
+}
+.sheet-log li {
+  overflow-wrap: anywhere;
+}
+.sheet-log li.mine b {
+  color: var(--color-text-muted);
+}
+.sheet-empty {
+  margin: auto;
+  color: var(--color-text-faint);
+}
+.sheet-form {
   display: flex;
   gap: var(--space-2);
+  padding: var(--space-2);
 }
-.fs-form input {
+.sheet-form input {
   flex: 1;
+  min-width: 0;
+  min-height: 2.75rem;
+  padding: var(--space-2) var(--space-4);
   font-size: 16px;
-  background: rgb(0 0 0 / 0.65);
+  background: rgb(0 0 0 / 0.55);
   border-radius: var(--radius-full);
 }
-.fs-form button {
-  width: 2.6rem;
+.sheet-form .send {
+  flex: none;
+  width: 2.75rem;
   padding: 0;
   border-radius: 50%;
 }
+
 @media (max-width: 40rem) {
   .vol {
     display: none;
@@ -459,10 +677,15 @@ defineExpose({
   .stage {
     border-radius: 0;
     box-shadow: none;
-    max-height: 56vh;
   }
-  .stage.fs {
-    max-height: none;
+  .controls {
+    padding-inline: var(--space-1);
+  }
+  .chat-sheet {
+    width: min(20rem, 60%);
+  }
+  .chat-open .controls {
+    right: min(20rem, 60%);
   }
 }
 </style>

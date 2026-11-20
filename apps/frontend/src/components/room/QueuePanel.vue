@@ -9,6 +9,8 @@ const props = defineProps<{
   selfId: string | null;
   busy: boolean;
   error: string | null;
+  // Inside the phone tab: no card frame, no heading (the tab says "Очередь").
+  flat?: boolean;
 }>();
 const emit = defineEmits<{
   add: [url: string];
@@ -67,7 +69,7 @@ defineExpose({ focusInput: () => input.value?.focus() });
 </script>
 
 <template>
-  <section class="queue" aria-label="Очередь видео">
+  <section class="queue" :class="{ flat }" aria-label="Очередь видео">
     <header class="head">
       <h2>Очередь <span class="count">{{ queued.length }}</span></h2>
       <button v-if="isOwner && queued.length > 0" class="ghost small" data-testid="queue-next" @click="emit('next')">
@@ -153,15 +155,20 @@ defineExpose({ focusInput: () => input.value?.focus() });
   border-radius: var(--radius-lg);
   background: var(--color-surface);
 }
+.queue.flat {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
 .head {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 h2 {
-  font-size: var(--text-sm);
+  font-size: var(--text-xs);
   text-transform: uppercase;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   color: var(--color-text-faint);
 }
 .count {
@@ -208,7 +215,8 @@ h2 {
   opacity: 0.4;
 }
 .item.now {
-  background: rgb(255 107 90 / 0.14);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-accent-line);
 }
 .badge {
   flex: none;
@@ -263,9 +271,19 @@ h2 {
 .icon {
   background: transparent;
   color: var(--color-text-muted);
-  padding: var(--space-1) var(--space-2);
-  min-width: 1.8rem;
+  width: 2.25rem;
+  min-height: 2.25rem;
   font-size: var(--text-sm);
+}
+/* Fingers need bigger targets than a mouse. */
+@media (pointer: coarse) {
+  .icon {
+    width: 2.75rem;
+    min-height: 2.75rem;
+  }
+  .small {
+    min-height: 2.75rem;
+  }
 }
 .icon:hover:not(:disabled) {
   background: var(--color-surface);
