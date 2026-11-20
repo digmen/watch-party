@@ -1,17 +1,23 @@
-# Optional edge container (enable with WP_EDGE=1 in infra/.env) for a host where 80/443 are taken.
-# Cloudflare connects to it on 9443; certificates live on the host in /root/certs (watch.pem/.key).
+# Optional edge container (enable with WP_EDGE=1 in infra/.env) for a host where 443 is taken.
+# Browsers reach tv.kerry.zone:9443 directly; :80 only answers Let's Encrypt HTTP-01 challenges
+# (and redirects). Cloudflare still reaches the old hostname on 9443 (self-signed /root/certs).
 services:
   edge:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
       - "9443:9443"
+      - "80:80"
     volumes:
       - ./Caddyfile.edge:/etc/caddy/Caddyfile:ro
       - /root/certs:/certs:ro
+      - edge-data:/data
     networks:
       - watchparty-net
-    mem_limit: 64m
+    mem_limit: 128m
     depends_on:
       - backend
       - frontend
+
+volumes:
+  edge-data:

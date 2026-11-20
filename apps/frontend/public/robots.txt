@@ -10,4 +10,4 @@ Disallow: /rooms
 Disallow: /login
 Disallow: /api/
 
-Sitemap: https://kerry.zone/sitemap.xml
+Sitemap: https://tv.kerry.zone:9443/sitemap.xml

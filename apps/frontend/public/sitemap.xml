@@ -3,33 +3,33 @@
   Only the two public marketing pages belong here. Rooms are private and ephemeral, /login has
   nothing to index, and the API isn't a page at all.
 
-  Absolute URLs, now that the app is served from a real domain (kerry.zone) instead of a random
+  Absolute URLs, now that the app is served from a real domain (tv.kerry.zone:9443, direct — no Cloudflare since 20.11.2026) instead of a random
   *.trycloudflare.com Quick Tunnel hostname — matches VITE_PUBLIC_ORIGIN in src/seo.ts, which
   drives the canonical/og:url tags. Change both together if the domain ever moves again.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
-    <loc>https://kerry.zone/</loc>
+    <loc>https://tv.kerry.zone:9443/</loc>
     <changefreq>weekly</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://kerry.zone/public</loc>
+    <loc>https://tv.kerry.zone:9443/public</loc>
     <changefreq>hourly</changefreq>
     <priority>0.7</priority>
   </url>
   <url>
-    <loc>https://kerry.zone/about</loc>
+    <loc>https://tv.kerry.zone:9443/about</loc>
     <changefreq>monthly</changefreq>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://kerry.zone/privacy</loc>
+    <loc>https://tv.kerry.zone:9443/privacy</loc>
     <changefreq>yearly</changefreq>
     <priority>0.2</priority>
   </url>
   <url>
-    <loc>https://kerry.zone/terms</loc>
+    <loc>https://tv.kerry.zone:9443/terms</loc>
     <changefreq>yearly</changefreq>
     <priority>0.2</priority>
   </url>

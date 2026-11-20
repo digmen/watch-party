@@ -17,7 +17,12 @@ import type { Env } from "./config/env.schema";
 import { FastifySocketIoAdapter } from "./modules/gateway/fastify-redis-io.adapter";
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestFastifyApplication>(AppModule, new FastifyAdapter(), {
+  // The only hop in front of the backend is our own reverse proxy (edge Caddy / Traefik) inside the
+  // docker network. Trusting exactly those private ranges makes request.ip the viewer's real address
+  // (taken from X-Forwarded-For, which Caddy rewrites for untrusted clients, so it can't be spoofed)
+  // instead of the proxy's — per-IP throttling then counts each viewer, not everybody as one.
+  const adapter = new FastifyAdapter({ trustProxy: ["127.0.0.1", "::1", "172.16.0.0/12", "10.0.0.0/8"] });
+  const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
     bufferLogs: true,
   });
 

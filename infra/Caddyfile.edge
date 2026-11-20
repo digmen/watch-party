@@ -1,22 +1,17 @@
-# Edge for a host whose ports 80/443 belong to other services (Xray VPN): terminates TLS on :9443,
-# which Cloudflare reaches through an Origin Rule (destination port 9443 for this hostname).
+# Edge for a host whose port 443 belongs to Xray (personal VPN). Everything lives on :9443.
 #
-# Only Cloudflare may talk to it — the list below is https://www.cloudflare.com/ips-v4 and -v6
-# (changes are rare; refresh when Cloudflare announces a new range).
+# Since 20.11.2026 the site is served DIRECTLY (no Cloudflare proxy): from Russia, traffic through
+# Cloudflare is cut after ~20 KB (measured: the main JS bundle stalled at 21 877 B for 30 s, video
+# segments never arrived), while the same server directly gives 11 MB/s from Moscow.
+#
+#   tv.kerry.zone:9443      — the site. Grey DNS record, Let's Encrypt certificate (HTTP-01 on :80).
+#   watch.kerry.zone (CF)   — old address, still behind Cloudflare: only redirects to the new one
+#                             (a redirect is a few hundred bytes and passes even from Russia).
 {
-	auto_https off
 	admin off
 }
 
-:9443 {
-	tls /certs/watch.pem /certs/watch.key
-
-	@notcf not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
-	# `handle` blocks run in order and the first match wins, so the Cloudflare check must be one.
-	handle @notcf {
-		respond "forbidden" 403
-	}
-
+tv.kerry.zone:9443 {
 	encode zstd gzip
 
 	@api path /api* /auth* /socket.io*
@@ -32,5 +27,26 @@
 
 	handle {
 		reverse_proxy frontend:80
+	}
+}
+
+# Anything else on :9443 is the Cloudflare-proxied old hostname (Origin Rule → 9443).
+# Only Cloudflare may talk to it — list from https://www.cloudflare.com/ips-v4 and -v6.
+:9443 {
+	tls /certs/watch.pem /certs/watch.key
+
+	@notcf not remote_ip 173.245.48.0/20 103.21.244.0/22 103.22.200.0/22 103.31.4.0/22 141.101.64.0/18 108.162.192.0/18 190.93.240.0/20 188.114.96.0/20 197.234.240.0/22 198.41.128.0/17 162.158.0.0/15 104.16.0.0/13 104.24.0.0/14 172.64.0.0/13 131.0.72.0/22 2400:cb00::/32 2606:4700::/32 2803:f800::/32 2405:b500::/32 2405:8100::/32 2a06:98c0::/29 2c0f:f248::/32
+	handle @notcf {
+		respond "forbidden" 403
+	}
+
+	# The Google OAuth callback must keep working on the old address until the new redirect URI is
+	# registered in Google Cloud; after that this exception can go.
+	handle /auth/google/callback {
+		redir https://tv.kerry.zone:9443{uri} 302
+	}
+
+	handle {
+		redir https://tv.kerry.zone:9443{uri} 301
 	}
 }
