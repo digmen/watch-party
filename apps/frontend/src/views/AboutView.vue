@@ -10,176 +10,240 @@ usePageSeo({
     "Watch Party — бесплатный совместный просмотр видео для тех, кто далеко друг от друга: комнаты, общий плеер и чат.",
   path: "/about",
 });
+
+const pillars = [
+  {
+    title: "Все на одной секунде",
+    text: "Пауза, перемотка и старт применяются у всех сразу. Если у кого-то подвис интернет, плеер сам плавно подтянет его к общему времени.",
+  },
+  {
+    title: "Без «подожди, догоняю»",
+    text: "Видео готовится на сервере один раз, поэтому второй, третий и десятый зритель получают его так же быстро, как первый.",
+  },
+  {
+    title: "Чат рядом с видео",
+    text: "Реакции и шутки видны всем сразу. Историю сообщений увидит и тот, кто зашёл позже.",
+  },
+];
 </script>
 
 <template>
   <main class="about">
     <section class="hero">
-      <p class="eyebrow">Наша миссия</p>
-      <h1>Расстояние — не повод смотреть порознь</h1>
-      <p class="lede">
-        Когда важные люди оказываются в разных городах или странах, вечер кино вдвоём обычно
-        превращается в «три, два, один — жми» и всё равно расходится на пару секунд. Watch Party
-        существует, чтобы это ощущалось так, будто вы на одном диване — даже когда между вами
-        тысячи километров.
-      </p>
+      <div class="glow" aria-hidden="true"></div>
+      <div class="container hero-inner">
+        <p class="eyebrow">Наша миссия</p>
+        <h1>Расстояние — не повод смотреть <span class="grad">порознь</span></h1>
+        <p class="lede">
+          Когда важные люди оказываются в разных городах или странах, вечер кино вдвоём обычно превращается в «три, два,
+          один — жми» и всё равно расходится на пару секунд. Watch Party существует, чтобы это ощущалось так, будто вы на
+          одном диване — даже когда между вами тысячи километров.
+        </p>
+      </div>
     </section>
 
-    <section class="how">
-      <p class="eyebrow">Как это устроено</p>
+    <section class="container block">
+      <div class="head">
+        <p class="eyebrow">Как это устроено</p>
+        <h2>Три вещи, ради которых всё сделано</h2>
+      </div>
       <div class="grid">
-        <article class="card">
-          <h2>Все на одной секунде</h2>
-          <p>
-            Пауза, перемотка и старт применяются у всех сразу. Если у кого-то подвис интернет,
-            плеер сам плавно подтянет его к общему времени.
-          </p>
-        </article>
-        <article class="card">
-          <h2>Без «подожди, догоняю»</h2>
-          <p>
-            Видео готовится на сервере один раз, поэтому второй, третий и десятый зритель получают
-            его так же быстро, как первый.
-          </p>
-        </article>
-        <article class="card">
-          <h2>Чат рядом с видео</h2>
-          <p>
-            Реакции и шутки видны всем сразу. Историю сообщений увидит и тот, кто зашёл позже.
-          </p>
+        <article v-for="(p, i) in pillars" :key="p.title" class="pillar">
+          <span class="num">{{ String(i + 1).padStart(2, "0") }}</span>
+          <h3>{{ p.title }}</h3>
+          <p>{{ p.text }}</p>
         </article>
       </div>
     </section>
 
-    <section class="model">
-      <p class="eyebrow">Условия</p>
-      <h2>Бесплатно и без регистрации</h2>
-      <p class="model-text">
-        Создавать комнаты, звать друзей и смотреть вместе можно бесплатно. Для гостей достаточно
-        ввести имя. Аккаунт (почта или Google) нужен только чтобы комнаты сохранялись.
-      </p>
+    <section class="container block split">
+      <article class="panel panel-accent">
+        <p class="eyebrow">Условия</p>
+        <h2>Бесплатно и без регистрации</h2>
+        <p>
+          Создавать комнаты, звать друзей и смотреть вместе можно бесплатно. Для гостей достаточно ввести имя. Аккаунт
+          (почта или Google) нужен только чтобы комнаты сохранялись.
+        </p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Что можно смотреть</p>
+        <h2>Ваша ссылка — ваше видео</h2>
+        <p>
+          YouTube, VK Видео, ok.ru, Rutube, Twitch, TikTok, а также прямые ссылки на видеофайлы, HLS- и
+          DASH-потоки. Сервис не хранит видео: воспроизводится только та ссылка, которую вы указали. Платные
+          стриминги с защитой вроде Netflix не поддерживаются.
+        </p>
+      </article>
     </section>
 
-    <section class="watch">
-      <p class="eyebrow">Что можно смотреть</p>
-      <p>
-        Прямые ссылки на видеофайлы, HLS- и DASH-потоки, а также ok.ru и VK Видео. Сервис не хранит
-        видео: воспроизводится только та ссылка, которую вы указали. YouTube, Netflix и подобные
-        сервисы не поддерживаются.
-      </p>
-    </section>
-
-    <section class="closing">
-      <h2>Позовите того, с кем давно собирались что-нибудь посмотреть</h2>
-      <RouterLink class="btn" :to="auth.isAuthenticated ? '/rooms' : '/'">Создать комнату</RouterLink>
+    <section class="container block">
+      <div class="closing">
+        <h2>Позовите того, с кем давно собирались что-нибудь посмотреть</h2>
+        <RouterLink class="btn big" :to="auth.isAuthenticated ? '/rooms' : '/'">Создать комнату</RouterLink>
+      </div>
     </section>
   </main>
 </template>
 
 <style scoped>
 .about {
-  max-width: var(--container);
-  margin: 0 auto;
-  padding: var(--space-10) var(--space-4) var(--space-12);
-}
-
-.eyebrow {
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: var(--text-xs);
-  color: var(--color-accent);
-  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-12);
 }
 
 .hero {
-  max-width: var(--container-narrow);
-  margin: 0 auto var(--space-10);
+  position: relative;
+  isolation: isolate;
+  padding: var(--space-10) 0 var(--space-4);
   text-align: center;
 }
-.hero h1 {
-  font-size: var(--text-3xl);
-  letter-spacing: -0.02em;
+.glow {
+  position: absolute;
+  inset: -4rem 0 auto;
+  height: 32rem;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(35% 45% at 30% 10%, rgb(255 181 71 / 0.16), transparent 70%),
+    radial-gradient(35% 45% at 75% 20%, color-mix(in srgb, var(--color-glow) 20%, transparent), transparent 70%);
+}
+.hero-inner {
+  max-width: 50rem;
+}
+.hero .eyebrow {
   margin-bottom: var(--space-4);
 }
+h1 {
+  font-size: var(--text-hero);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  margin-bottom: var(--space-5);
+}
+.grad {
+  background: linear-gradient(90deg, var(--color-accent), #ffd99a);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 .lede {
+  max-width: 38rem;
+  margin: 0 auto;
   font-size: var(--text-lg);
   color: var(--color-text-muted);
 }
 
-.how {
-  padding: var(--space-8) 0;
+.block {
+  padding-top: var(--space-10);
 }
-.how .eyebrow {
+.head {
   text-align: center;
-  display: block;
+  margin-bottom: var(--space-6);
 }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-  gap: var(--space-4);
-  margin-top: var(--space-5);
-}
-.card {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-5);
-  box-shadow: var(--shadow-sm);
-}
-.card h2 {
-  font-size: var(--text-lg);
+.head .eyebrow {
   margin-bottom: var(--space-2);
 }
-.card p {
+.head h2 {
+  font-size: var(--text-3xl);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+}
+.pillar {
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(180deg, var(--color-surface-raised), var(--color-surface));
+}
+.num {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  background: linear-gradient(180deg, var(--color-accent), rgb(255 181 71 / 0.15));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.pillar h3 {
+  font-size: var(--text-lg);
+  margin: var(--space-4) 0 var(--space-2);
+}
+.pillar p,
+.panel p:not(.eyebrow) {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
 }
 
-.model {
-  max-width: var(--container-narrow);
-  margin: var(--space-8) auto;
-  text-align: center;
-  padding: var(--space-6);
-  background: var(--color-surface-raised);
-  border-radius: var(--radius-lg);
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
 }
-.model h2 {
+.panel {
+  padding: var(--space-6) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface);
+}
+.panel-accent {
+  border-color: var(--color-accent-line);
+  background:
+    radial-gradient(80% 80% at 100% 0%, rgb(255 181 71 / 0.12), transparent 70%),
+    var(--color-surface);
+}
+.panel .eyebrow {
+  margin-bottom: var(--space-2);
+}
+.panel h2 {
   font-size: var(--text-xl);
   margin-bottom: var(--space-3);
 }
-.model-text {
-  color: var(--color-text-muted);
-}
-
-.watch {
-  max-width: var(--container-narrow);
-  margin: var(--space-8) auto 0;
-  text-align: center;
-}
-.watch p:not(.eyebrow) {
-  color: var(--color-text-muted);
-}
 
 .closing {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-10) var(--space-5);
+  border: 1px solid var(--color-accent-line);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(60% 80% at 50% 0%, rgb(255 181 71 / 0.2), transparent 70%),
+    radial-gradient(50% 70% at 100% 100%, color-mix(in srgb, var(--color-glow) 20%, transparent), transparent 70%),
+    var(--color-surface);
   text-align: center;
-  padding: var(--space-10) 0 0;
 }
 .closing h2 {
+  max-width: 32rem;
   font-size: var(--text-2xl);
-  margin-bottom: var(--space-5);
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--space-3) var(--space-6);
-  border-radius: var(--radius);
-  font-weight: 600;
-  text-decoration: none;
-  background: var(--color-accent);
-  color: var(--color-accent-contrast);
-  transition: background var(--transition);
+.btn.big {
+  min-height: 3.25rem;
+  padding-inline: var(--space-6);
+  font-size: var(--text-lg);
 }
-.btn:hover {
-  background: var(--color-accent-hover);
+
+@media (min-width: 40rem) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .split {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .panel {
+    padding: var(--space-8) var(--space-6);
+  }
+}
+
+@media (min-width: 64rem) {
+  .hero {
+    padding-top: var(--space-12);
+  }
 }
 </style>
