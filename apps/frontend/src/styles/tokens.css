@@ -1,31 +1,39 @@
 /*
  * Design tokens — the single source of truth for colour, spacing and type across the app.
  *
- * Dark by default and only dark: this is a video product, and a bright chrome around a dark
- * player is exactly the thing that hurts to look at in the evening, which is when people
- * actually watch films together.
+ * Look (v2, 2026-11): "projector in a dark hall". Near-black ink surfaces, one warm amber
+ * accent — the colour of the light beam — and a wide display face for headings. Dark only:
+ * people watch films together in the evening, a bright chrome around the player hurts.
  */
 :root {
-  /* Surfaces, darkest to lightest. The steps are deliberately small — big jumps read as
-     "different app", small ones read as depth. */
-  --color-bg: #0e1116;
-  --color-surface: #161b22;
-  --color-surface-raised: #1d2430;
-  --color-border: #272f3d;
-  --color-border-strong: #37414f;
+  /* Surfaces, darkest to lightest. Small steps read as depth, big ones as "another app". */
+  --color-bg: #08080b;
+  --color-surface: #111116;
+  --color-surface-raised: #18181f;
+  --color-surface-hover: #1f1f28;
+  --color-border: #24242e;
+  --color-border-strong: #353542;
 
-  /* Warm accent against the cold background: it reads as "cinema seat", and it keeps the one
-     thing we want clicked (create / watch) unmistakable. */
-  --color-accent: #ff6b5a;
-  --color-accent-hover: #ff8474;
-  --color-accent-contrast: #1a0d0a;
+  /* The projector beam. Dark text on it — amber with white text fails contrast. */
+  --color-accent: #ffb547;
+  --color-accent-hover: #ffc56e;
+  --color-accent-contrast: #1a1204;
+  --color-accent-soft: rgb(255 181 71 / 0.12);
+  --color-accent-line: rgb(255 181 71 / 0.35);
+  /* Secondary glow used only in decorative gradients, never for meaning. */
+  --color-glow: #7c5cff;
 
-  --color-text: #e9edf3;
-  --color-text-muted: #98a3b3;
-  --color-text-faint: #8b96a8;
+  --color-text: #f4f4f6;
+  --color-text-muted: #a3a3b2;
+  --color-text-faint: #8a8a99;
 
   --color-danger: #ff6b6b;
+  --color-danger-soft: rgb(255 107 107 / 0.12);
   --color-success: #4ade80;
+  --color-success-soft: rgb(74 222 128 / 0.12);
+
+  --font-body: "Manrope Variable", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Unbounded Variable", "Manrope Variable", system-ui, sans-serif;
 
   /* 4px base scale. Named by step, not by use, so nothing is misleading when reused. */
   --space-1: 0.25rem;
@@ -43,21 +51,28 @@
   --text-base: 1rem;
   --text-lg: 1.15rem;
   --text-xl: 1.4rem;
-  --text-2xl: 1.85rem;
-  --text-3xl: 2.4rem;
-  --text-hero: clamp(2.2rem, 6vw, 3.6rem);
+  --text-2xl: clamp(1.5rem, 3.5vw, 1.9rem);
+  --text-3xl: clamp(1.8rem, 5vw, 2.6rem);
+  --text-hero: clamp(2.1rem, 7vw, 4.4rem);
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
   --radius-full: 999px;
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow: 0 8px 24px rgb(0 0 0 / 0.35);
-  --shadow-lg: 0 24px 60px rgb(0 0 0 / 0.45);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 30px 80px rgb(0 0 0 / 0.55);
+  --shadow-accent: 0 8px 30px rgb(255 181 71 / 0.25);
 
-  --transition: 150ms ease;
+  --transition: 160ms ease;
 
-  --container: 68rem;
-  --container-narrow: 34rem;
+  /* Page gutter: 16px on phones, grows with the viewport. */
+  --gutter: clamp(1rem, 4vw, 2rem);
+  --container: 72rem;
+  --container-narrow: 30rem;
+
+  /* Fixed header height, used by sticky elements below it. */
+  --header-h: 4rem;
 }
