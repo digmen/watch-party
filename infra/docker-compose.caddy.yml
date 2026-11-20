@@ -39,7 +39,7 @@ services:
       args:
         # Реальный домен теперь стабилен (kerry.zone) — включает canonical/og:url/absolute
         # og:image, см. src/seo.ts. Раньше был пуст (эпоха случайного *.trycloudflare.com).
-        VITE_PUBLIC_ORIGIN: ${VITE_PUBLIC_ORIGIN:-https://tv.kerry.zone:9443}
+        VITE_PUBLIC_ORIGIN: ${VITE_PUBLIC_ORIGIN:-https://kerry.zone}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${WP_FRONTEND_PORT:-8080}:80"

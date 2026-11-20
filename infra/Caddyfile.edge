@@ -1,17 +1,24 @@
-# Edge for a host whose port 443 belongs to Xray (personal VPN). Everything lives on :9443.
+# Edge for the Prague host, where port 443 is shared with Xray (personal VPN).
 #
-# Since 20.11.2026 the site is served DIRECTLY (no Cloudflare proxy): from Russia, traffic through
-# Cloudflare is cut after ~20 KB (measured: the main JS bundle stalled at 21 877 B for 30 s, video
-# segments never arrived), while the same server directly gives 11 MB/s from Moscow.
+# Since 20.11.2026 the site is https://kerry.zone — DIRECT, no Cloudflare proxy (from Russia,
+# Cloudflare cut every response at ~20 KB; directly the server gives 11 MB/s from Moscow).
 #
-#   tv.kerry.zone:9443      — the site. Grey DNS record, Let's Encrypt certificate (HTTP-01 on :80).
-#   watch.kerry.zone (CF)   — old address, still behind Cloudflare: only redirects to the new one
-#                             (a redirect is a few hundred bytes and passes even from Russia).
+# Port 443 belongs to HAProxy on the host (infra/haproxy/haproxy.cfg): it reads the TLS SNI and
+# passes kerry.zone to this Caddy on 127.0.0.1:9444 (with PROXY protocol, so we still see the
+# viewer's real IP) and everything else to Xray. :80 serves Let's Encrypt HTTP-01 and redirects.
 {
 	admin off
+	servers :9444 {
+		listener_wrappers {
+			proxy_protocol {
+				allow 172.16.0.0/12 127.0.0.1/32
+			}
+			tls
+		}
+	}
 }
 
-tv.kerry.zone:9443 {
+kerry.zone:9444 {
 	encode zstd gzip
 
 	@api path /api* /auth* /socket.io*
@@ -30,8 +37,16 @@ tv.kerry.zone:9443 {
 	}
 }
 
-# The Cloudflare-proxied old hostname (Origin Rule → 9443). Named explicitly: a host-less block
-# with a manual `tls` would pin its self-signed cert for every SNI, tv.kerry.zone included.
+# Plain HTTP and the interim direct address (used for a few hours on 20.11) → the real one.
+http://kerry.zone, http://tv.kerry.zone {
+	redir https://kerry.zone{uri} 308
+}
+tv.kerry.zone:9443 {
+	redir https://kerry.zone{uri} 301
+}
+
+# Old Cloudflare-proxied hostname (Origin Rule → 9443): only redirects. Named explicitly — a
+# host-less block with a manual `tls` would pin its self-signed cert for every SNI.
 # Only Cloudflare may talk to it — list from https://www.cloudflare.com/ips-v4 and -v6.
 watch.kerry.zone:9443 {
 	tls /certs/watch.pem /certs/watch.key
@@ -41,13 +56,13 @@ watch.kerry.zone:9443 {
 		respond "forbidden" 403
 	}
 
-	# The Google OAuth callback must keep working on the old address until the new redirect URI is
-	# registered in Google Cloud; after that this exception can go.
+	# Keeps Google sign-in working until https://kerry.zone/auth/google/callback is registered in
+	# Google Cloud; the callback is then switched in .env and this exception can go.
 	handle /auth/google/callback {
-		redir https://tv.kerry.zone:9443{uri} 302
+		redir https://kerry.zone{uri} 302
 	}
 
 	handle {
-		redir https://tv.kerry.zone:9443{uri} 301
+		redir https://kerry.zone{uri} 301
 	}
 }

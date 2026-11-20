@@ -8,6 +8,8 @@ services:
     ports:
       - "9443:9443"
       - "80:80"
+      # Only HAProxy on this host talks to it (SNI kerry.zone from :443), never the internet.
+      - "127.0.0.1:9444:9444"
     volumes:
       - ./Caddyfile.edge:/etc/caddy/Caddyfile:ro
       - /root/certs:/certs:ro
