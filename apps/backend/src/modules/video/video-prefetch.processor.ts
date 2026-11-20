@@ -144,7 +144,7 @@ export class VideoPrefetchProcessor extends WorkerHost {
       .where(eq(videoAssets.id, assetId));
 
     if (kind === "hls" || kind === "dash") {
-      await this.prepareManifestPassthrough(assetId, assetHash, playbackUrl, headers);
+      await this.prepareManifestPassthrough(assetId, assetHash, playbackUrl, headers, kind, resolved.variants);
       return;
     }
 
@@ -164,9 +164,18 @@ export class VideoPrefetchProcessor extends WorkerHost {
     assetHash: string,
     sourceUrl: string,
     headers: Record<string, string>,
+    kind: "hls" | "dash",
+    variants?: ResolvedPlayback["variants"],
   ): Promise<void> {
     try {
-      await this.cache.proxyManifest(sourceUrl, assetHash, headers);
+      // HLS gets position-based tokens (refreshable after a signature expires) and, when the source
+      // offers several renditions, an adaptive master playlist. DASH keeps the original passthrough.
+      if (kind === "hls") {
+        const { renditions } = await this.cache.proxyHls(sourceUrl, assetHash, headers, variants);
+        this.logger.log(`asset ${assetId} HLS proxied with ${renditions} rendition(s)`);
+      } else {
+        await this.cache.proxyManifest(sourceUrl, assetHash, headers);
+      }
       await this.markReady(assetId, this.cache.dirFor(assetHash));
       this.logger.log(`asset ${assetId} manifest proxied and ready`);
     } catch (err) {

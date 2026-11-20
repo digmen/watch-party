@@ -7,7 +7,7 @@ import { roomVideos, type VideoAsset, videoAssets } from "../../database/schema"
 import { RoomGateway } from "../gateway/room.gateway";
 import { RoomQueueService } from "./room-queue.service";
 import { toVideoAssetDto } from "./video.presenter";
-import { hashUrl, READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
+import { hashUrl, OriginRejectedError, READY_AFTER_SEGMENTS, VideoCacheService } from "./video-cache.service";
 import type { PrefetchJobData } from "./video-prefetch.processor";
 import { VideoResolverService } from "./video-resolver.service";
 
@@ -32,11 +32,17 @@ function titleFromUrl(sourceUrl: string): string | null {
   }
 }
 
+// A refresh runs yt-dlp (seconds, up to a minute and a half): at most one per asset at a time, and not
+// again within this window — a segment that is really gone must not turn into a yt-dlp loop.
+const REFRESH_COOLDOWN_MS = 60_000;
+
 const INTERRUPTED_MESSAGE = "Обработка прервалась (сервер перезапустился). Отправьте ссылку ещё раз.";
 
 @Injectable()
 export class VideoService implements OnModuleInit {
   private readonly logger = new Logger(VideoService.name);
+  private readonly refreshing = new Map<string, Promise<boolean>>();
+  private readonly lastRefresh = new Map<string, number>();
 
   constructor(
     @Inject(DRIZZLE_CLIENT) private readonly db: DrizzleDb,
@@ -236,6 +242,49 @@ export class VideoService implements OnModuleInit {
     const [asset] = await this.db.select().from(videoAssets).where(eq(videoAssets.id, assetId)).limit(1);
     if (!asset) throw new NotFoundException("Video asset not found");
     return asset;
+  }
+
+  // A lazily cached HLS segment. Signed CDN URLs (Rutube, VK) expire while a long film is still being
+  // watched: when the origin refuses one, the source is re-resolved once and the request retried with
+  // the fresh URL behind the same token (see VideoCacheService.refreshHls) — for every rendition.
+  async fetchPassthroughSegment(asset: VideoAsset, token: string): Promise<string> {
+    try {
+      return await this.cache.getOrFetchSegment(asset.sourceUrlHash, token);
+    } catch (err) {
+      if (!(err instanceof OriginRejectedError)) throw err;
+      this.logger.warn(`origin refused ${token} of asset ${asset.id} (${err.status}); re-resolving`);
+      if (!(await this.refreshPassthrough(asset))) throw err;
+      return this.cache.getOrFetchSegment(asset.sourceUrlHash, token);
+    }
+  }
+
+  private refreshPassthrough(asset: VideoAsset): Promise<boolean> {
+    const inFlight = this.refreshing.get(asset.id);
+    if (inFlight) return inFlight;
+    if (Date.now() - (this.lastRefresh.get(asset.id) ?? 0) < REFRESH_COOLDOWN_MS) return Promise.resolve(false);
+    this.lastRefresh.set(asset.id, Date.now());
+
+    const run = (async () => {
+      try {
+        const resolved = await this.resolver.resolveForFetch(asset.sourceUrl);
+        if (resolved.kind !== "hls") return false;
+        const refreshed = await this.cache.refreshHls(
+          asset.sourceUrlHash,
+          resolved.playbackUrl,
+          resolved.headers,
+          resolved.variants,
+        );
+        this.logger.log(`asset ${asset.id}: ${refreshed} rendition(s) refreshed with new origin URLs`);
+        return refreshed > 0;
+      } catch (err) {
+        this.logger.warn(`refresh of asset ${asset.id} failed: ${(err as Error).message}`);
+        return false;
+      } finally {
+        this.refreshing.delete(asset.id);
+      }
+    })();
+    this.refreshing.set(asset.id, run);
+    return run;
   }
 
   async touchLastAccessed(assetId: string): Promise<void> {

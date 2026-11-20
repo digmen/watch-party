@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import type { VideoAsset } from "../../database/schema";
+import { type HlsVariant, pickAbrVariants, type YtDlpFormat } from "./hls-variants";
 
 export type VideoKind = VideoAsset["kind"];
 // What classifyDirectUrl/resolveForFetch can actually determine — "needs_extraction" is a
@@ -21,6 +22,10 @@ export interface ResolvedPlayback {
   // A live broadcast has no end: it is captured into a growing playlist until the source stops.
   isLive?: boolean;
   title?: string;
+  // Two or more muxed H.264/AAC renditions of an HLS source (Rutube): the backend then serves its own
+  // master playlist over them (adaptive quality). Only set when `kind` is "hls"; `playbackUrl` is
+  // still the single rendition yt-dlp picked, used when the multi-rendition setup fails.
+  variants?: HlsVariant[];
 }
 
 interface ExtractorResult {
@@ -30,6 +35,7 @@ interface ExtractorResult {
   isLive: boolean;
   title?: string;
   protocol?: string;
+  variants?: HlsVariant[];
 }
 
 const EXTENSION_MAP: Array<[RegExp, ResolvedKind]> = [
@@ -172,7 +178,8 @@ export class VideoResolverService {
         const resolvedKind =
           (await this.classifyDirectUrl(resolved.url, resolved.headers)) ??
           (resolved.protocol?.startsWith("m3u8") ? "hls" : "direct_mp4");
-        return { ...base, kind: resolvedKind, playbackUrl: resolved.url };
+        const variants = resolvedKind === "hls" && resolved.variants?.length ? resolved.variants : undefined;
+        return { ...base, kind: resolvedKind, playbackUrl: resolved.url, ...(variants ? { variants } : {}) };
       }
     }
 
@@ -302,6 +309,7 @@ export class VideoResolverService {
           acodec?: string;
           http_headers?: Record<string, string>;
         }>;
+        formats?: YtDlpFormat[];
       };
       const base = { title: info.title, isLive: info.is_live === true };
 
@@ -323,9 +331,17 @@ export class VideoResolverService {
       }
 
       if (!info.url) return { transient: false };
+      // A live broadcast goes through ffmpeg; only a VOD HLS source gets the multi-rendition master.
+      const variants = !base.isLive && info.protocol?.startsWith("m3u8") ? pickAbrVariants(info.formats, info.url) : [];
       return {
         transient: false,
-        result: { ...base, url: info.url, headers: info.http_headers ?? {}, protocol: info.protocol },
+        result: {
+          ...base,
+          url: info.url,
+          headers: info.http_headers ?? {},
+          protocol: info.protocol,
+          ...(variants.length >= 2 ? { variants } : {}),
+        },
       };
     } catch (err) {
       this.logger.warn(`yt-dlp returned unparseable JSON for ${sourceUrl}: ${(err as Error).message}`);

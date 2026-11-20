@@ -31,6 +31,29 @@ const volume = ref(1);
 const muted = ref(false);
 const dragSec = ref<number | null>(null);
 const unsupported = ref(false);
+// Adaptive streams only: "Авто" or a fixed rendition, chosen per viewer.
+const levels = ref<Array<{ index: number; height: number }>>([]);
+const quality = ref(-1);
+const playingLevel = ref(-1);
+function onLevels(next: Array<{ index: number; height: number }>) {
+  levels.value = next;
+  quality.value = -1;
+  playingLevel.value = -1;
+}
+// Encodes are often cropped (Rutube's "1080p" is 1920x1040): name the rung people know.
+function tierName(height: number): string {
+  const tiers = [144, 240, 360, 480, 720, 1080, 1440, 2160];
+  const tier = tiers.reduce((best, t) => (Math.abs(t - height) < Math.abs(best - height) ? t : best));
+  return `${tier}p`;
+}
+const qualityOptions = computed(() => [...levels.value].sort((a, b) => b.height - a.height));
+const autoLabel = computed(() => {
+  const now = levels.value.find((l) => l.index === playingLevel.value);
+  return now ? `Авто · ${tierName(now.height)}` : "Авто";
+});
+function applyQuality() {
+  video.value?.setQuality(quality.value);
+}
 // The first seconds are not on the device yet: nobody can start the film (and the room is told, so a
 // hand-over to the next video can wait for everybody).
 const bufferReady = ref(false);
@@ -254,6 +277,8 @@ defineExpose({
       @ended="emit('ended')"
       @stall="emit('stall', $event)"
       @unsupported="unsupported = true"
+      @levels="onLevels"
+      @level="playingLevel = $event"
     />
 
     <div v-if="unsupported" class="unsupported" data-testid="unsupported" role="alert">
@@ -338,6 +363,17 @@ defineExpose({
         {{ muted || volume === 0 ? "🔇" : "🔊" }}
       </button>
       <input v-model.number="volume" class="vol" type="range" min="0" max="1" step="0.05" aria-label="Громкость" @input="applyVolume" />
+      <select
+        v-if="levels.length > 1"
+        v-model.number="quality"
+        class="quality"
+        data-testid="quality"
+        aria-label="Качество видео"
+        @change="applyQuality"
+      >
+        <option :value="-1">{{ autoLabel }}</option>
+        <option v-for="l in qualityOptions" :key="l.index" :value="l.index">{{ tierName(l.height) }}</option>
+      </select>
       <button
         v-if="showOverlay"
         class="icon chat-btn"
@@ -543,6 +579,30 @@ defineExpose({
   border: none;
   background: none;
   accent-color: var(--color-accent);
+}
+.quality {
+  flex: none;
+  width: auto;
+  min-height: 2.75rem;
+  padding: 0 var(--space-1);
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: #fff;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.quality:hover {
+  background: rgb(255 255 255 / 0.15);
+}
+.quality option {
+  color: initial;
+}
+@media (pointer: coarse) {
+  /* iOS Safari zooms the page into a smaller select on tap. */
+  .quality {
+    font-size: max(16px, 1rem);
+  }
 }
 
 /* Floating messages, bottom-left, above the controls. */

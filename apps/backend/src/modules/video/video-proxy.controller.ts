@@ -157,8 +157,16 @@ export class VideoProxyController {
     const segmentPath =
       asset.kind === "direct_mp4"
         ? `${this.cache.dirFor(asset.sourceUrlHash)}/${token}`
-        : await this.cache.getOrFetchSegment(asset.sourceUrlHash, token);
+        : await this.videos.fetchPassthroughSegment(asset, token);
 
-    reply.type(/\.(m4s|mp4)$/i.test(token) ? "video/mp4" : "video/mp2t").send(createReadStream(segmentPath));
+    // `.m3u8` here is one rendition's media playlist of an adaptive (multi-quality) HLS asset — the
+    // master playlist above lists them by bare relative name, so they land on this same route and
+    // pass the same per-request membership check as the segments.
+    const type = /\.m3u8$/i.test(token)
+      ? "application/vnd.apple.mpegurl"
+      : /\.(m4s|mp4)$/i.test(token)
+        ? "video/mp4"
+        : "video/mp2t";
+    reply.type(type).send(createReadStream(segmentPath));
   }
 }

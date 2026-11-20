@@ -4,7 +4,17 @@ import type Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
 
 const props = defineProps<{ src: string; wantPlaying: boolean }>();
-const emit = defineEmits<{ toggle: []; stall: [stalled: boolean]; unsupported: []; ready: [ready: boolean]; ended: [] }>();
+const emit = defineEmits<{
+  toggle: [];
+  stall: [stalled: boolean];
+  unsupported: [];
+  ready: [ready: boolean];
+  ended: [];
+  // Renditions of an adaptive (multi-quality) stream, as hls.js level indices + picture height; empty
+  // for a single-quality video. `current` is the level playing now (also while on "auto").
+  levels: [levels: Array<{ index: number; height: number }>];
+  level: [current: number];
+}>();
 const videoEl = ref<HTMLVideoElement | null>(null);
 let hls: Hls | null = null;
 
@@ -18,6 +28,7 @@ async function attach(src: string) {
 
   hls?.destroy();
   hls = null;
+  emit("levels", []);
 
   // A second attach() (new video) can start while this one is still loading the library: only the
   // latest may proceed.
@@ -37,6 +48,11 @@ async function attach(src: string) {
       // Keep a long runway ahead: a viewer on a shaky connection survives a dip instead of freezing.
       maxBufferLength: 60,
       maxMaxBufferLength: 180,
+      // Adaptive quality (the server offers several renditions for e.g. Rutube): start from the
+      // bandwidth estimate rather than the first listed rendition, and never fetch more pixels than
+      // the player shows. Per viewer — the room clock is unaffected by which rendition plays.
+      startLevel: -1,
+      capLevelToPlayerSize: true,
       // Segments are membership-gated by the session cookie. Same-origin in production this is
       // implicit, but a cross-origin API (local dev, a future separate API host) silently drops
       // cookies on XHR unless asked — and every playlist request comes back 401.
@@ -49,6 +65,13 @@ async function attach(src: string) {
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
       else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls?.recoverMediaError();
     });
+    hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+      emit(
+        "levels",
+        data.levels.length > 1 ? data.levels.map((l, index) => ({ index, height: l.height })) : [],
+      );
+    });
+    hls.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => emit("level", data.level));
     hls.loadSource(src);
     hls.attachMedia(el);
   } else if (el.canPlayType("application/vnd.apple.mpegurl")) {
@@ -171,7 +194,13 @@ function setVolume(volume: number, muted: boolean) {
   el.muted = muted;
 }
 
-defineExpose({ applyCorrection, setPlaying, getDuration, setVolume });
+// -1 = automatic. `nextLevel` switches from the next segment on, keeping what is already buffered — an
+// immediate switch would flush the buffer and briefly hold the whole room as "stalled".
+function setQuality(level: number) {
+  if (hls) hls.nextLevel = level;
+}
+
+defineExpose({ applyCorrection, setPlaying, getDuration, setVolume, setQuality });
 </script>
 
 <template>
