@@ -97,10 +97,15 @@ let stalledReported = false;
 let hasPlayed = false;
 let stallTimer: ReturnType<typeof setInterval> | null = null;
 
+// Sources rarely start at exactly 0: Rutube's first TS segment begins at 0.125 s, so a viewer at
+// 0 sat "outside" the buffer, the start gate never lifted and play stayed disabled (20.11). Half a
+// second of slack covers such start offsets; the player steps over a gap that small on its own.
+const BUFFER_GAP_TOLERANCE_SEC = 0.5;
+
 function secondsBuffered(el: HTMLVideoElement): number {
   const t = el.currentTime;
   for (let i = 0; i < el.buffered.length; i++) {
-    if (t >= el.buffered.start(i) - 0.1 && t <= el.buffered.end(i)) return el.buffered.end(i) - t;
+    if (t >= el.buffered.start(i) - BUFFER_GAP_TOLERANCE_SEC && t <= el.buffered.end(i)) return el.buffered.end(i) - t;
   }
   return 0;
 }
