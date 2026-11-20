@@ -71,6 +71,11 @@ const FORMAT_SELECTOR =
 // trip) — 20s was cutting it off mid-resolution. This runs inside an async BullMQ job / the
 // "add video" request, not blocking the WS gateway, so a generous ceiling is cheap.
 const YT_DLP_TIMEOUT_MS = 90_000;
+const YT_DLP_ATTEMPTS = 3;
+// Server-side hiccups and network blips — worth another try. Anything else (404, private,
+// unsupported) is a real answer.
+const TRANSIENT_YT_DLP_ERROR =
+  /HTTP Error 5\d\d|timed out|Connection (reset|refused|aborted)|Temporary failure|EOF occurred/i;
 
 @Injectable()
 export class VideoResolverService {
@@ -251,9 +256,21 @@ export class VideoResolverService {
     }
   }
 
+  // Platforms' APIs fail now and then for a second (Rutube answers 502 to roughly one lookup in a
+  // few) — a retry is what a person pressing "play" again would do. Only transient failures are
+  // retried: a private/removed video fails the same way every time and would just triple the wait.
   private async runYtDlp(sourceUrl: string): Promise<ExtractorResult | undefined> {
+    for (let attempt = 1; ; attempt++) {
+      const { result, transient } = await this.runYtDlpOnce(sourceUrl);
+      if (result || !transient || attempt >= YT_DLP_ATTEMPTS) return result;
+      this.logger.log(`yt-dlp retry ${attempt + 1}/${YT_DLP_ATTEMPTS} for ${sourceUrl}`);
+      await new Promise((r) => setTimeout(r, 2_000 * attempt));
+    }
+  }
+
+  private async runYtDlpOnce(sourceUrl: string): Promise<{ result?: ExtractorResult; transient: boolean }> {
     const proc = this.spawnYtDlp(sourceUrl);
-    if (!proc) return undefined;
+    if (!proc) return { transient: false };
 
     const timeout = setTimeout(() => proc.kill(), YT_DLP_TIMEOUT_MS);
     const [exitCode, stdout, stderr] = await Promise.all([
@@ -267,7 +284,7 @@ export class VideoResolverService {
 
     if (exitCode !== 0) {
       this.logger.warn(`yt-dlp failed for ${sourceUrl} (exit ${exitCode}): ${stderr.split("\n").slice(-5).join(" ")}`);
-      return undefined;
+      return { transient: TRANSIENT_YT_DLP_ERROR.test(stderr) };
     }
 
     try {
@@ -292,19 +309,25 @@ export class VideoResolverService {
         const audio = parts.find((f) => f.acodec && f.acodec !== "none" && f !== video);
         if (video && audio) {
           return {
-            ...base,
-            url: video.url,
-            audioUrl: audio.url,
-            headers: video.http_headers ?? info.http_headers ?? {},
+            transient: false,
+            result: {
+              ...base,
+              url: video.url,
+              audioUrl: audio.url,
+              headers: video.http_headers ?? info.http_headers ?? {},
+            },
           };
         }
       }
 
-      if (!info.url) return undefined;
-      return { ...base, url: info.url, headers: info.http_headers ?? {}, protocol: info.protocol };
+      if (!info.url) return { transient: false };
+      return {
+        transient: false,
+        result: { ...base, url: info.url, headers: info.http_headers ?? {}, protocol: info.protocol },
+      };
     } catch (err) {
       this.logger.warn(`yt-dlp returned unparseable JSON for ${sourceUrl}: ${(err as Error).message}`);
-      return undefined;
+      return { transient: false };
     }
   }
 }
