@@ -58,6 +58,9 @@ const EXTRACTOR_DOMAINS = [
   "twitter.com",
 ];
 
+// Hosts whose metadata API is geo-restricted to Russia; see regionProxyFor().
+const RU_PROXY_DOMAINS = ["rutube.ru"];
+
 // H.264 + AAC only: those two copy straight into MPEG-TS segments (no transcoding, so no CPU cost
 // and no quality loss). VP9/AV1 + Opus — what YouTube serves for its best qualities — would need
 // re-encoding. Up to 1080p; falls back to whatever single file the site offers.
@@ -166,6 +169,13 @@ export class VideoResolverService {
       }
     }
 
+    // A browser on these pages plays the platform's pre-roll ads first and, when the film is
+    // region-locked, an "unavailable" stub — the sniffer would capture exactly that. Better to
+    // report a clear failure than to show the room an advert.
+    if (this.isAdInjectingHost(sourceUrl)) {
+      throw new Error(`Could not resolve a playable stream for ${sourceUrl}`);
+    }
+
     // Not a file, not a known platform: let a real browser look at the page.
     const sniffed = await this.sniffPage(sourceUrl);
     if (sniffed) return sniffed;
@@ -194,12 +204,42 @@ export class VideoResolverService {
     return undefined;
   }
 
+  // Some platforms answer "unavailable in your region / VPN" to a server outside Russia (Rutube
+  // does, for licensed films: its play-options API refuses, the CDN itself does not). Only the
+  // metadata lookup goes through RU_PROXY_URL (a SOCKS tunnel to a Russian host) — the returned
+  // stream URLs are fetched directly, so video traffic never crosses the proxy. Without the
+  // variable nothing changes. Without this, yt-dlp fails and the sniffer fallback ends up
+  // capturing Rutube's pre-roll ads and the "unavailable" stub instead of the film.
+  private regionProxyFor(sourceUrl: string): string | undefined {
+    const proxy = process.env.RU_PROXY_URL;
+    if (!proxy) return undefined;
+    try {
+      const host = new URL(sourceUrl).hostname.toLowerCase();
+      return RU_PROXY_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`)) ? proxy : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private isAdInjectingHost(sourceUrl: string): boolean {
+    try {
+      const host = new URL(sourceUrl).hostname.toLowerCase();
+      return RU_PROXY_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`));
+    } catch {
+      return false;
+    }
+  }
+
   private spawnYtDlp(sourceUrl: string) {
     try {
       // -J (dump-single-json) instead of -g: a bare resolved URL isn't enough to actually fetch
       // it — ok.ru/vk's CDN 400s a request without a real browser User-Agent — so this needs
       // yt-dlp's "http_headers" alongside the URL, not just the URL.
-      return Bun.spawn(["yt-dlp", "-f", FORMAT_SELECTOR, "--no-playlist", "-J", "--no-warnings", sourceUrl], {
+      const args = ["yt-dlp", "-f", FORMAT_SELECTOR, "--no-playlist", "-J", "--no-warnings"];
+      const proxy = this.regionProxyFor(sourceUrl);
+      if (proxy) args.push("--proxy", proxy);
+      args.push(sourceUrl);
+      return Bun.spawn(args, {
         stdout: "pipe",
         stderr: "pipe",
       });
