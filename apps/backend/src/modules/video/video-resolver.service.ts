@@ -71,7 +71,9 @@ const FORMAT_SELECTOR =
 // trip) — 20s was cutting it off mid-resolution. This runs inside an async BullMQ job / the
 // "add video" request, not blocking the WS gateway, so a generous ceiling is cheap.
 const YT_DLP_TIMEOUT_MS = 90_000;
-const YT_DLP_ATTEMPTS = 3;
+// Rutube fails in bursts of several seconds (measured 20.11: 502 on 3 of 4 lookups during a burst);
+// six attempts with growing pauses span ~30s, enough to outlast one.
+const YT_DLP_ATTEMPTS = 6;
 // Server-side hiccups and network blips — worth another try. Anything else (404, private,
 // unsupported) is a real answer.
 const TRANSIENT_YT_DLP_ERROR =
@@ -257,7 +259,7 @@ export class VideoResolverService {
   }
 
   // Platforms' APIs fail now and then for a second (Rutube answers 502 to roughly one lookup in a
-  // few) — a retry is what a person pressing "play" again would do. Only transient failures are
+  // few, in bursts) — a retry is what a person pressing "play" again would do. Only transient failures are
   // retried: a private/removed video fails the same way every time and would just triple the wait.
   private async runYtDlp(sourceUrl: string): Promise<ExtractorResult | undefined> {
     for (let attempt = 1; ; attempt++) {
