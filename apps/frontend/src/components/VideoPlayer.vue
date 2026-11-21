@@ -2,6 +2,7 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
 import type Hls from "hls.js";
 import { computeDriftCorrection } from "../ws/clock-sync";
+import { refreshSession } from "../api/client";
 
 const props = defineProps<{ src: string; wantPlaying: boolean }>();
 const emit = defineEmits<{
@@ -61,6 +62,16 @@ async function attach(src: string) {
       },
     });
     hls.on(Hls.Events.ERROR, (_event, data) => {
+      // 401 = the 15-minute access cookie ran out mid-film (21.11: video froze for a live viewer).
+      // Renew the session and resume loading; retrying with the dead cookie would loop forever.
+      const code = (data.response as { code?: number } | undefined)?.code;
+      if (code === 401) {
+        const current = hls;
+        refreshSession().then((ok) => {
+          if (ok && current === hls) current?.startLoad();
+        });
+        return;
+      }
       if (!data.fatal) return;
       if (data.type === Hls.ErrorTypes.NETWORK_ERROR) hls?.startLoad();
       else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls?.recoverMediaError();
@@ -148,7 +159,13 @@ function onEnded() {
   emit("ended");
 }
 
+// Watching a film makes no API calls besides segment loads, so nothing else renews the 15-minute
+// access cookie: keep it fresh while the player is on screen instead of waiting for a refusal.
+const SESSION_KEEPALIVE_MS = 10 * 60 * 1000;
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
 onMounted(() => {
+  keepaliveTimer = setInterval(() => void refreshSession(), SESSION_KEEPALIVE_MS);
   attach(props.src);
   videoEl.value?.addEventListener("ended", onEnded);
   stallTimer = setInterval(checkStall, 400);
@@ -165,6 +182,7 @@ watch(
 onUnmounted(() => {
   videoEl.value?.removeEventListener("ended", onEnded);
   if (stallTimer) clearInterval(stallTimer);
+  if (keepaliveTimer) clearInterval(keepaliveTimer);
   if (stalledReported) emit("stall", false);
   hls?.destroy();
 });
